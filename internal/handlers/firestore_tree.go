@@ -84,6 +84,9 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 
+	// Get user ID from context
+	userID, _ := c.Get("user_id")
+
 	person := models.Person{
 		ID:        id,
 		Name:      req.Name,
@@ -93,6 +96,7 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 		Avatar:    req.Avatar,
 		Bio:       req.Bio,
 		Children:  []string{},
+		CreatedBy: userID.(string),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -166,6 +170,14 @@ func (h *FirestoreTreeHandler) UpdatePerson(c *gin.Context) {
 		return
 	}
 
+	// Check ownership: only creator or admin can edit
+	userID, _ := c.Get("user_id")
+	role, _ := c.Get("role")
+	if person.CreatedBy != userID.(string) && role != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only edit nodes you created"})
+		return
+	}
+
 	// Build update map
 	updates := []firestore.Update{
 		{Path: "updated_at", Value: time.Now()},
@@ -215,6 +227,27 @@ func (h *FirestoreTreeHandler) DeletePerson(c *gin.Context) {
 	id := c.Param("id")
 	ctx := context.Background()
 
+	// Check if person exists and verify ownership
+	doc, err := h.client.Collection("people").Doc(id).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Person not found"})
+		return
+	}
+
+	var person models.Person
+	if err := doc.DataTo(&person); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse person data"})
+		return
+	}
+
+	// Check ownership: only creator or admin can delete
+	userID, _ := c.Get("user_id")
+	role, _ := c.Get("role")
+	if person.CreatedBy != userID.(string) && role != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only delete nodes you created"})
+		return
+	}
+
 	// First, remove this person from any parent's children array using ArrayRemove (atomic)
 	iter := h.client.Collection("people").Where("children", "array-contains", id).Documents(ctx)
 	defer iter.Stop()
@@ -252,7 +285,7 @@ func (h *FirestoreTreeHandler) DeletePerson(c *gin.Context) {
 	}
 
 	// Now delete the person
-	_, err := h.client.Collection("people").Doc(id).Delete(ctx)
+	_, err = h.client.Collection("people").Doc(id).Delete(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete person"})
 		return

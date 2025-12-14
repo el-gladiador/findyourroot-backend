@@ -44,6 +44,7 @@ type Person struct {
 	Avatar    string    `json:"avatar"`
 	Bio       string    `json:"bio"`
 	Children  []string  `json:"children"`
+	CreatedBy string    `json:"created_by"` // User ID of creator
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
