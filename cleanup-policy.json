@@ -1,0 +1,10 @@
+{
+  "name": "keep-recent-and-delete-old",
+  "action": {
+    "type": "Delete"
+  },
+  "condition": {
+    "olderThan": "604800s",
+    "tagState": "ANY"
+  }
+}
