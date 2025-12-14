@@ -76,7 +76,7 @@ The API will be available at `http://localhost:8080`
 **POST** `/api/v1/auth/login`
 ```json
 {
-  "email": "mohammadamiri.py@gmail.com",
+  "email": "your.email@example.com",
   "password": "your-password"
 }
 ```
@@ -87,7 +87,7 @@ Response:
   "token": "eyJhbGc...",
   "user": {
     "id": "uuid",
-    "email": "mohammadamiri.py@gmail.com",
+    "email": "your.email@example.com",
     "is_admin": true
   }
 }
