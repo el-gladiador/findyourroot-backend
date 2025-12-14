@@ -56,11 +56,7 @@ func (h *FirestoreAuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Check if user is admin
-	if !user.IsAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
-		return
-	}
+	user.ID = doc.Ref.ID
 
 	// Generate JWT token
 	token, err := h.generateToken(user)
@@ -69,9 +65,14 @@ func (h *FirestoreAuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.LoginResponse{
-		Token: token,
-		User:  user,
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":       user.ID,
+			"email":    user.Email,
+			"role":     user.Role,
+			"is_admin": user.Role == models.RoleAdmin,
+		},
 	})
 }
 
@@ -98,9 +99,16 @@ func (h *FirestoreAuthHandler) ValidateToken(c *gin.Context) {
 		return
 	}
 
+	user.ID = doc.Ref.ID
+
 	c.JSON(http.StatusOK, gin.H{
 		"valid": true,
-		"user":  user,
+		"user": gin.H{
+			"id":       user.ID,
+			"email":    user.Email,
+			"role":     user.Role,
+			"is_admin": user.Role == models.RoleAdmin,
+		},
 	})
 }
 
@@ -115,6 +123,7 @@ func (h *FirestoreAuthHandler) generateToken(user models.User) (string, error) {
 		"user_id":  user.ID,
 		"email":    user.Email,
 		"is_admin": user.IsAdmin,
+		"role":     string(user.Role),
 		"iss":      "findyourroot-api",
 		"sub":      user.ID,
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
@@ -124,4 +133,298 @@ func (h *FirestoreAuthHandler) generateToken(user models.User) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(jwtSecret))
+}
+
+// Register creates a new user with 'viewer' role by default
+func (h *FirestoreAuthHandler) Register(c *gin.Context) {
+	var req models.RegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	if req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email and password are required"})
+		return
+	}
+
+	if len(req.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 6 characters"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Check if user already exists
+	iter := h.client.Collection("users").Where("email", "==", req.Email).Limit(1).Documents(ctx)
+	_, err := iter.Next()
+	if err != iterator.Done {
+		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
+		return
+	}
+
+	// Create user with viewer role
+	now := time.Now()
+	user := models.User{
+		Email:        req.Email,
+		PasswordHash: string(hashedPassword),
+		Role:         models.RoleViewer,
+		IsAdmin:      false,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	docRef, _, err := h.client.Collection("users").Add(ctx, user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
+		return
+	}
+
+	user.ID = docRef.ID
+
+	// Generate token
+	token, err := h.generateToken(user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":         user.ID,
+			"email":      user.Email,
+			"role":       user.Role,
+			"is_admin":   false,
+			"can_view":   true,
+			"can_edit":   false,
+			"can_delete": false,
+		},
+	})
+}
+
+// RequestPermission creates a permission request from a user
+func (h *FirestoreAuthHandler) RequestPermission(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	email, _ := c.Get("email")
+
+	var req models.PermissionRequestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	if req.RequestedRole != models.RoleEditor && req.RequestedRole != models.RoleAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role requested. Must be 'editor' or 'admin'"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Check for existing pending requests
+	iter := h.client.Collection("permission_requests").
+		Where("user_id", "==", userID).
+		Where("status", "==", "pending").
+		Documents(ctx)
+	_, err := iter.Next()
+	if err != iterator.Done {
+		c.JSON(http.StatusConflict, gin.H{"error": "You already have a pending permission request"})
+		return
+	}
+
+	// Create permission request
+	now := time.Now()
+	permReq := models.PermissionRequest{
+		UserID:        userID.(string),
+		UserEmail:     email.(string),
+		RequestedRole: req.RequestedRole,
+		Message:       req.Message,
+		Status:        "pending",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+
+	docRef, _, err := h.client.Collection("permission_requests").Add(ctx, permReq)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating permission request"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Permission request submitted successfully",
+		"id":      docRef.ID,
+	})
+}
+
+// GetPermissionRequests lists permission requests (admin only)
+func (h *FirestoreAuthHandler) GetPermissionRequests(c *gin.Context) {
+	role, exists := c.Get("role")
+	if !exists || role != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can view permission requests"})
+		return
+	}
+
+	status := c.Query("status")
+	if status == "" {
+		status = "pending"
+	}
+
+	ctx := context.Background()
+	iter := h.client.Collection("permission_requests").
+		Where("status", "==", status).
+		OrderBy("created_at", firestore.Desc).
+		Documents(ctx)
+
+	var requests []models.PermissionRequestResponse
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching requests"})
+			return
+		}
+
+		var req models.PermissionRequest
+		if err := doc.DataTo(&req); err != nil {
+			continue
+		}
+
+		requests = append(requests, models.PermissionRequestResponse{
+			Id:            doc.Ref.ID,
+			UserId:        req.UserID,
+			UserEmail:     req.UserEmail,
+			RequestedRole: string(req.RequestedRole),
+			Message:       req.Message,
+			Status:        req.Status,
+			CreatedAt:     req.CreatedAt,
+			UpdatedAt:     req.UpdatedAt,
+		})
+	}
+
+	if requests == nil {
+		requests = []models.PermissionRequestResponse{}
+	}
+
+	c.JSON(http.StatusOK, requests)
+}
+
+// ApprovePermissionRequest approves a permission request with custom permissions (admin only)
+func (h *FirestoreAuthHandler) ApprovePermissionRequest(c *gin.Context) {
+	role, exists := c.Get("role")
+	if !exists || role != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can approve permission requests"})
+		return
+	}
+
+	requestID := c.Param("id")
+
+	ctx := context.Background()
+
+	// Get the permission request
+	doc, err := h.client.Collection("permission_requests").Doc(requestID).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Permission request not found"})
+		return
+	}
+
+	var req models.PermissionRequest
+	if err := doc.DataTo(&req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error parsing request"})
+		return
+	}
+
+	if req.Status != "pending" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request has already been processed"})
+		return
+	}
+
+	// Use the requested role from the permission request
+	newRole := req.RequestedRole
+	isAdmin := newRole == models.RoleAdmin
+
+	// Update user role
+	_, err = h.client.Collection("users").Doc(req.UserID).Update(ctx, []firestore.Update{
+		{Path: "role", Value: newRole},
+		{Path: "is_admin", Value: isAdmin},
+		{Path: "updated_at", Value: time.Now()},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error updating user"})
+		return
+	}
+
+	// Update permission request status
+	_, err = h.client.Collection("permission_requests").Doc(requestID).Update(ctx, []firestore.Update{
+		{Path: "status", Value: "approved"},
+		{Path: "updated_at", Value: time.Now()},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error updating request"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Permission request approved",
+		"user":    req.UserEmail,
+		"role":    newRole,
+	})
+}
+
+// RejectPermissionRequest rejects a permission request (admin only)
+func (h *FirestoreAuthHandler) RejectPermissionRequest(c *gin.Context) {
+	role, exists := c.Get("role")
+	if !exists || role != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can reject permission requests"})
+		return
+	}
+
+	requestID := c.Param("id")
+	ctx := context.Background()
+
+	// Get the permission request
+	doc, err := h.client.Collection("permission_requests").Doc(requestID).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Permission request not found"})
+		return
+	}
+
+	var req models.PermissionRequest
+	if err := doc.DataTo(&req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error parsing request"})
+		return
+	}
+
+	if req.Status != "pending" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request has already been processed"})
+		return
+	}
+
+	// Update permission request status
+	_, err = h.client.Collection("permission_requests").Doc(requestID).Update(ctx, []firestore.Update{
+		{Path: "status", Value: "rejected"},
+		{Path: "updated_at", Value: time.Now()},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error updating request"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Permission request rejected",
+		"user":    req.UserEmail,
+	})
 }

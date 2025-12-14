@@ -14,6 +14,7 @@ type Claims struct {
 	UserID  string `json:"user_id"`
 	Email   string `json:"email"`
 	IsAdmin bool   `json:"is_admin"`
+	Role    string `json:"role"`
 	jwt.RegisteredClaims
 }
 
@@ -55,17 +56,54 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Check if user is admin
-		if !claims.IsAdmin {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
-			c.Abort()
-			return
-		}
-
 		// Set user info in context
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
 		c.Set("is_admin", claims.IsAdmin)
+		c.Set("role", claims.Role)
+		c.Set("claims", claims)
+
+		c.Next()
+	}
+}
+
+// RequireEditor ensures user has at least editor role
+func RequireEditor() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.Abort()
+			return
+		}
+
+		userClaims := claims.(*Claims)
+		if userClaims.Role != "editor" && userClaims.Role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Editor or Admin access required", "required_role": "editor"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// RequireAdmin ensures user has admin role
+func RequireAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.Abort()
+			return
+		}
+
+		userClaims := claims.(*Claims)
+		if userClaims.Role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required", "required_role": "admin"})
+			c.Abort()
+			return
+		}
 
 		c.Next()
 	}
