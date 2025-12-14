@@ -82,6 +82,7 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 
 	ctx := context.Background()
 	id := uuid.New().String()
+	now := time.Now()
 
 	person := models.Person{
 		ID:        id,
@@ -91,19 +92,50 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 		Location:  req.Location,
 		Avatar:    req.Avatar,
 		Bio:       req.Bio,
-		Children:  req.Children,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Children:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
-	if person.Children == nil {
-		person.Children = []string{}
-	}
+	// If parentID is provided, use a transaction to create person and update parent atomically
+	if req.ParentID != nil && *req.ParentID != "" {
+		err := h.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+			// First, check if parent exists
+			parentRef := h.client.Collection("people").Doc(*req.ParentID)
+			parentDoc, err := tx.Get(parentRef)
+			if err != nil {
+				return err
+			}
 
-	_, err := h.client.Collection("people").Doc(id).Set(ctx, person)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create person"})
-		return
+			var parent models.Person
+			if err := parentDoc.DataTo(&parent); err != nil {
+				return err
+			}
+
+			// Create the child person
+			personRef := h.client.Collection("people").Doc(id)
+			if err := tx.Set(personRef, person); err != nil {
+				return err
+			}
+
+			// Update parent's children array using ArrayUnion (atomic, prevents duplicates)
+			return tx.Update(parentRef, []firestore.Update{
+				{Path: "children", Value: firestore.ArrayUnion(id)},
+				{Path: "updated_at", Value: now},
+			})
+		})
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create person with parent relationship"})
+			return
+		}
+	} else {
+		// No parent, just create the person
+		_, err := h.client.Collection("people").Doc(id).Set(ctx, person)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create person"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusCreated, person)
@@ -183,6 +215,43 @@ func (h *FirestoreTreeHandler) DeletePerson(c *gin.Context) {
 	id := c.Param("id")
 	ctx := context.Background()
 
+	// First, remove this person from any parent's children array using ArrayRemove (atomic)
+	iter := h.client.Collection("people").Where("children", "array-contains", id).Documents(ctx)
+	defer iter.Stop()
+
+	// Collect all parents that need updating
+	var parentRefs []*firestore.DocumentRef
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find parent relationships"})
+			return
+		}
+		parentRefs = append(parentRefs, doc.Ref)
+	}
+
+	// Use batch write to update all parents atomically
+	if len(parentRefs) > 0 {
+		batch := h.client.Batch()
+		for _, parentRef := range parentRefs {
+			batch.Update(parentRef, []firestore.Update{
+				{Path: "children", Value: firestore.ArrayRemove(id)},
+				{Path: "updated_at", Value: time.Now()},
+			})
+		}
+
+		// Commit the batch
+		_, err := batch.Commit(ctx)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cleanup parent relationships"})
+			return
+		}
+	}
+
+	// Now delete the person
 	_, err := h.client.Collection("people").Doc(id).Delete(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete person"})
@@ -190,4 +259,49 @@ func (h *FirestoreTreeHandler) DeletePerson(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Person deleted successfully"})
+}
+
+// DeleteAllPeople deletes all people from the tree (for testing)
+func (h *FirestoreTreeHandler) DeleteAllPeople(c *gin.Context) {
+	ctx := context.Background()
+
+	// Get all documents
+	iter := h.client.Collection("people").Documents(ctx)
+	defer iter.Stop()
+
+	batch := h.client.Batch()
+	count := 0
+
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch people"})
+			return
+		}
+
+		batch.Delete(doc.Ref)
+		count++
+
+		// Firestore batch limit is 500
+		if count%500 == 0 {
+			if _, err := batch.Commit(ctx); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete people"})
+				return
+			}
+			batch = h.client.Batch()
+		}
+	}
+
+	// Commit remaining
+	if count%500 != 0 {
+		if _, err := batch.Commit(ctx); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete people"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "All people deleted successfully"})
 }

@@ -92,9 +92,18 @@ func (h *TreeHandler) CreatePerson(c *gin.Context) {
 	id := uuid.New().String()
 	children := pq.Array(req.Children)
 
+	// Start a transaction to handle parent-child relationship atomically
+	tx, err := h.db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	defer tx.Rollback()
+
+	// Create the new person
 	var p models.Person
 	var childrenResult pq.StringArray
-	err := h.db.QueryRow(`
+	err = tx.QueryRow(`
 		INSERT INTO people (id, name, role, birth, location, avatar, bio, children)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, name, role, birth, location, avatar, bio, children, created_at, updated_at
@@ -105,6 +114,38 @@ func (h *TreeHandler) CreatePerson(c *gin.Context) {
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create person"})
+		return
+	}
+
+	// If parentID is provided, add this new person to parent's children array
+	if req.ParentID != nil && *req.ParentID != "" {
+		// Check if parent exists
+		var parentExists bool
+		err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM people WHERE id = $1)`, *req.ParentID).Scan(&parentExists)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+		if !parentExists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Parent not found"})
+			return
+		}
+
+		// Add new person to parent's children array (append if not exists)
+		_, err = tx.Exec(`
+			UPDATE people 
+			SET children = array_append(children, $1), updated_at = CURRENT_TIMESTAMP
+			WHERE id = $2 AND NOT ($1 = ANY(children))
+		`, id, *req.ParentID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update parent relationship"})
+			return
+		}
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
 		return
 	}
 
@@ -198,7 +239,27 @@ func (h *TreeHandler) UpdatePerson(c *gin.Context) {
 func (h *TreeHandler) DeletePerson(c *gin.Context) {
 	id := c.Param("id")
 
-	result, err := h.db.Exec(`DELETE FROM people WHERE id = $1`, id)
+	// Start a transaction to handle cleanup atomically
+	tx, err := h.db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	defer tx.Rollback()
+
+	// Remove this person from any parent's children array
+	_, err = tx.Exec(`
+		UPDATE people 
+		SET children = array_remove(children, $1), updated_at = CURRENT_TIMESTAMP
+		WHERE $1 = ANY(children)
+	`, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cleanup relationships"})
+		return
+	}
+
+	// Delete the person
+	result, err := tx.Exec(`DELETE FROM people WHERE id = $1`, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete person"})
 		return
@@ -215,5 +276,22 @@ func (h *TreeHandler) DeletePerson(c *gin.Context) {
 		return
 	}
 
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "Person deleted successfully"})
+}
+
+// DeleteAllPeople deletes all people from the tree (for testing)
+func (h *TreeHandler) DeleteAllPeople(c *gin.Context) {
+	_, err := h.db.Exec(`DELETE FROM people`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete all people"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "All people deleted successfully"})
 }

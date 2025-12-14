@@ -47,6 +47,7 @@ type CreatePersonRequest struct {
 	Avatar   string   `json:"avatar" binding:"required"`
 	Bio      string   `json:"bio"`
 	Children []string `json:"children"`
+	ParentID *string  `json:"parent_id"` // Optional parent ID - backend will handle the relationship
 }
 
 // UpdatePersonRequest represents a request to update a person
