@@ -157,14 +157,6 @@ backend/
 └── .env.example        # Environment variables template
 ```
 
-## Admin Credentials
-
-Default admin user:
-- Email: `mohammadamiri.py@gmail.com`
-- Password: `Klgzu7.RpoG!`
-
-**⚠️ Change these credentials in production!**
-
 ## License
 
 Private Project
