@@ -17,7 +17,11 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
 	Role         UserRole  `json:"role"`
-	IsAdmin      bool      `json:"is_admin"` // Deprecated, use Role instead
+	IsAdmin      bool      `json:"is_admin"`    // Deprecated, use Role instead
+	TreeName     string    `json:"tree_name"`   // Family tree name (e.g., "Batur")
+	FatherName   string    `json:"father_name"` // Father's name for verification
+	BirthYear    string    `json:"birth_year"`  // Birth year for verification
+	IsVerified   bool      `json:"is_verified"` // Whether user is verified as part of the tree
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -51,8 +55,11 @@ type Person struct {
 
 // RegisterRequest represents registration data
 type RegisterRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
+	Email      string `json:"email" binding:"required,email"`
+	Password   string `json:"password" binding:"required,min=6"`
+	TreeName   string `json:"tree_name" binding:"required"` // Must be "Batur" for now
+	FatherName string `json:"father_name" binding:"required"`
+	BirthYear  string `json:"birth_year" binding:"required"`
 }
 
 // LoginRequest represents login credentials

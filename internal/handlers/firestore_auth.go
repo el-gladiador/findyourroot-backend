@@ -68,10 +68,12 @@ func (h *FirestoreAuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
 		"user": gin.H{
-			"id":       user.ID,
-			"email":    user.Email,
-			"role":     user.Role,
-			"is_admin": user.Role == models.RoleAdmin,
+			"id":          user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"is_admin":    user.Role == models.RoleAdmin,
+			"tree_name":   user.TreeName,
+			"is_verified": user.IsVerified,
 		},
 	})
 }
@@ -104,10 +106,12 @@ func (h *FirestoreAuthHandler) ValidateToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"valid": true,
 		"user": gin.H{
-			"id":       user.ID,
-			"email":    user.Email,
-			"role":     user.Role,
-			"is_admin": user.Role == models.RoleAdmin,
+			"id":          user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"is_admin":    user.Role == models.RoleAdmin,
+			"tree_name":   user.TreeName,
+			"is_verified": user.IsVerified,
 		},
 	})
 }
@@ -153,6 +157,12 @@ func (h *FirestoreAuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// Validate tree name (only "Batur" allowed for now)
+	if req.TreeName != "Batur" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid tree name. Currently only 'Batur' tree is available."})
+		return
+	}
+
 	ctx := context.Background()
 
 	// Check if user already exists
@@ -163,6 +173,57 @@ func (h *FirestoreAuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// Verify user exists in the family tree by father's name and birth year
+	peopleIter := h.client.Collection("people").Where("birth", "==", req.BirthYear).Documents(ctx)
+	defer peopleIter.Stop()
+
+	var foundMatch bool
+	for {
+		doc, err := peopleIter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			continue
+		}
+
+		var person models.Person
+		if err := doc.DataTo(&person); err != nil {
+			continue
+		}
+
+		// Find this person's parent and check if father's name matches
+		parentsIter := h.client.Collection("people").Where("children", "array-contains", person.ID).Documents(ctx)
+		for {
+			parentDoc, err := parentsIter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				continue
+			}
+
+			var parent models.Person
+			if err := parentDoc.DataTo(&parent); err != nil {
+				continue
+			}
+
+			// Check if this parent's name contains the father's name
+			if parent.Name == req.FatherName ||
+				(len(parent.Name) > 0 && len(req.FatherName) > 0 &&
+					(parent.Name == req.FatherName ||
+						(len(parent.Name) >= len(req.FatherName) && parent.Name[:len(req.FatherName)] == req.FatherName))) {
+				foundMatch = true
+				break
+			}
+		}
+		parentsIter.Stop()
+
+		if foundMatch {
+			break
+		}
+	}
+
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -170,13 +231,17 @@ func (h *FirestoreAuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Create user with viewer role
+	// Create user with verification status
 	now := time.Now()
 	user := models.User{
 		Email:        req.Email,
 		PasswordHash: string(hashedPassword),
 		Role:         models.RoleViewer,
 		IsAdmin:      false,
+		TreeName:     req.TreeName,
+		FatherName:   req.FatherName,
+		BirthYear:    req.BirthYear,
+		IsVerified:   foundMatch,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -199,14 +264,19 @@ func (h *FirestoreAuthHandler) Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"token": token,
 		"user": gin.H{
-			"id":         user.ID,
-			"email":      user.Email,
-			"role":       user.Role,
-			"is_admin":   false,
-			"can_view":   true,
-			"can_edit":   false,
-			"can_delete": false,
+			"id":          user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"is_admin":    false,
+			"tree_name":   user.TreeName,
+			"is_verified": user.IsVerified,
 		},
+		"message": func() string {
+			if user.IsVerified {
+				return "Account created and verified! You are part of the Batur family tree."
+			}
+			return "Account created. Verification pending - we couldn't automatically match your information to the tree. An admin will review your details."
+		}(),
 	})
 }
 
