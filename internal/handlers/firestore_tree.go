@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -80,6 +82,13 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 		return
 	}
 
+	// Debug logging
+	if req.ParentID != nil {
+		log.Printf("[CreatePerson] Creating child with parent_id: %s", *req.ParentID)
+	} else {
+		log.Printf("[CreatePerson] Creating root person (no parent_id)")
+	}
+
 	ctx := context.Background()
 	id := uuid.New().String()
 	now := time.Now()
@@ -108,31 +117,44 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 			parentRef := h.client.Collection("people").Doc(*req.ParentID)
 			parentDoc, err := tx.Get(parentRef)
 			if err != nil {
+				log.Printf("[CreatePerson] Error getting parent: %v", err)
 				return err
 			}
 
 			var parent models.Person
 			if err := parentDoc.DataTo(&parent); err != nil {
+				log.Printf("[CreatePerson] Error parsing parent data: %v", err)
 				return err
 			}
+			log.Printf("[CreatePerson] Found parent: %s, current children: %v", parent.Name, parent.Children)
 
 			// Create the child person
 			personRef := h.client.Collection("people").Doc(id)
 			if err := tx.Set(personRef, person); err != nil {
+				log.Printf("[CreatePerson] Error creating child: %v", err)
 				return err
 			}
+			log.Printf("[CreatePerson] Created child: %s", person.Name)
 
 			// Update parent's children array using ArrayUnion (atomic, prevents duplicates)
-			return tx.Update(parentRef, []firestore.Update{
+			err = tx.Update(parentRef, []firestore.Update{
 				{Path: "children", Value: firestore.ArrayUnion(id)},
 				{Path: "updated_at", Value: now},
 			})
+			if err != nil {
+				log.Printf("[CreatePerson] Error updating parent's children: %v", err)
+				return err
+			}
+			log.Printf("[CreatePerson] Successfully updated parent's children array")
+			return nil
 		})
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create person with parent relationship"})
+			log.Printf("[CreatePerson] Transaction failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create person with parent relationship: %v", err)})
 			return
 		}
+		log.Printf("[CreatePerson] Transaction completed successfully")
 	} else {
 		// No parent, just create the person
 		_, err := h.client.Collection("people").Doc(id).Set(ctx, person)

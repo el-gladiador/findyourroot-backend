@@ -13,17 +13,17 @@ const (
 
 // User represents a user in the system
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	Role         UserRole  `json:"role"`
-	IsAdmin      bool      `json:"is_admin"`    // Deprecated, use Role instead
-	TreeName     string    `json:"tree_name"`   // Family tree name (e.g., "Batur")
-	FatherName   string    `json:"father_name"` // Father's name for verification
-	BirthYear    string    `json:"birth_year"`  // Birth year for verification
-	IsVerified   bool      `json:"is_verified"` // Whether user is verified as part of the tree
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string    `json:"id" firestore:"id"`
+	Email        string    `json:"email" firestore:"email"`
+	PasswordHash string    `json:"-" firestore:"password_hash"`
+	Role         UserRole  `json:"role" firestore:"role"`
+	IsAdmin      bool      `json:"is_admin" firestore:"is_admin"`       // Deprecated, use Role instead
+	TreeName     string    `json:"tree_name" firestore:"tree_name"`     // Family tree name (e.g., "Batur")
+	FatherName   string    `json:"father_name" firestore:"father_name"` // Father's name for verification
+	BirthYear    string    `json:"birth_year" firestore:"birth_year"`   // Birth year for verification
+	IsVerified   bool      `json:"is_verified" firestore:"is_verified"` // Whether user is verified as part of the tree
+	CreatedAt    time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" firestore:"updated_at"`
 }
 
 // PermissionRequest represents a request for elevated permissions
@@ -40,17 +40,17 @@ type PermissionRequest struct {
 
 // Person represents a family tree member
 type Person struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Role      string    `json:"role"`
-	Birth     string    `json:"birth"`
-	Location  string    `json:"location"`
-	Avatar    string    `json:"avatar"`
-	Bio       string    `json:"bio"`
-	Children  []string  `json:"children"`
-	CreatedBy string    `json:"created_by"` // User ID of creator
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string    `json:"id" firestore:"id"`
+	Name      string    `json:"name" firestore:"name"`
+	Role      string    `json:"role" firestore:"role"`
+	Birth     string    `json:"birth" firestore:"birth"`
+	Location  string    `json:"location" firestore:"location"`
+	Avatar    string    `json:"avatar" firestore:"avatar"`
+	Bio       string    `json:"bio" firestore:"bio"`
+	Children  []string  `json:"children" firestore:"children"`
+	CreatedBy string    `json:"created_by" firestore:"created_by"` // User ID of creator
+	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" firestore:"updated_at"`
 }
 
 // RegisterRequest represents registration data

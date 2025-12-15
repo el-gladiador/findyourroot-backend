@@ -57,7 +57,9 @@ func main() {
 		ID:           userID,
 		Email:        email,
 		PasswordHash: string(hashedPassword),
+		Role:         models.RoleAdmin,
 		IsAdmin:      true,
+		IsVerified:   true,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
