@@ -27,6 +27,12 @@ go.work
 .env.local
 .env.production
 
+# Credentials and secrets
+serviceAccountKey.json
+*.key
+*.pem
+credentials.json
+
 # IDE
 .idea/
 .vscode/
