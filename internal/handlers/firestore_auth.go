@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -352,9 +353,9 @@ func (h *FirestoreAuthHandler) GetPermissionRequests(c *gin.Context) {
 	}
 
 	ctx := context.Background()
+	// Query without OrderBy to avoid needing composite index
 	iter := h.client.Collection("permission_requests").
 		Where("status", "==", status).
-		OrderBy("created_at", firestore.Desc).
 		Documents(ctx)
 
 	var requests []models.PermissionRequestResponse
@@ -364,7 +365,7 @@ func (h *FirestoreAuthHandler) GetPermissionRequests(c *gin.Context) {
 			break
 		}
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching requests"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching requests: " + err.Error()})
 			return
 		}
 
@@ -388,6 +389,11 @@ func (h *FirestoreAuthHandler) GetPermissionRequests(c *gin.Context) {
 	if requests == nil {
 		requests = []models.PermissionRequestResponse{}
 	}
+
+	// Sort by created_at descending in code
+	sort.Slice(requests, func(i, j int) bool {
+		return requests[i].CreatedAt.After(requests[j].CreatedAt)
+	})
 
 	c.JSON(http.StatusOK, requests)
 }

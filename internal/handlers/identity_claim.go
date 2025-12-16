@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -146,35 +147,45 @@ func (h *FirestoreIdentityClaimHandler) GetMyIdentityClaim(c *gin.Context) {
 		}
 	}
 
-	// Find any pending or recent claims
+	// Find any pending or recent claims - query without OrderBy to avoid index requirement
 	iter := h.client.Collection("identity_claims").
 		Where("user_id", "==", userID.(string)).
-		OrderBy("created_at", firestore.Desc).
-		Limit(1).
 		Documents(ctx)
 
-	doc, err := iter.Next()
-	if err == iterator.Done {
+	var claims []models.IdentityClaimRequest
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch claims"})
+			return
+		}
+
+		var claim models.IdentityClaimRequest
+		if err := doc.DataTo(&claim); err != nil {
+			continue
+		}
+		claims = append(claims, claim)
+	}
+
+	if len(claims) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"linked": false,
 			"claim":  nil,
 		})
 		return
 	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch claims"})
-		return
-	}
 
-	var claim models.IdentityClaimRequest
-	if err := doc.DataTo(&claim); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse claim data"})
-		return
-	}
+	// Sort by created_at descending and get the most recent
+	sort.Slice(claims, func(i, j int) bool {
+		return claims[i].CreatedAt.After(claims[j].CreatedAt)
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"linked": false,
-		"claim":  claim,
+		"claim":  claims[0],
 	})
 }
 
@@ -185,9 +196,9 @@ func (h *FirestoreIdentityClaimHandler) GetIdentityClaims(c *gin.Context) {
 
 	log.Printf("[IdentityClaims] Fetching claims with status: %s", status)
 
+	// Query without OrderBy to avoid needing composite index
 	iter := h.client.Collection("identity_claims").
 		Where("status", "==", status).
-		OrderBy("created_at", firestore.Desc).
 		Documents(ctx)
 	defer iter.Stop()
 
@@ -214,6 +225,11 @@ func (h *FirestoreIdentityClaimHandler) GetIdentityClaims(c *gin.Context) {
 	if claims == nil {
 		claims = []models.IdentityClaimRequest{}
 	}
+
+	// Sort by created_at descending in code
+	sort.Slice(claims, func(i, j int) bool {
+		return claims[i].CreatedAt.After(claims[j].CreatedAt)
+	})
 
 	log.Printf("[IdentityClaims] Found %d claims with status '%s'", len(claims), status)
 	c.JSON(http.StatusOK, claims)
