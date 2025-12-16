@@ -9,6 +9,7 @@ import (
 	"google.golang.org/api/option"
 )
 
+// test
 var FirestoreClient *firestore.Client
 
 // InitFirestore initializes Firestore client
