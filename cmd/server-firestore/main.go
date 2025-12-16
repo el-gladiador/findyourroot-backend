@@ -46,6 +46,16 @@ func main() {
 		DeletePerson(c *gin.Context)
 		DeleteAllPeople(c *gin.Context)
 	}
+	var searchHandler interface {
+		SearchPeople(c *gin.Context)
+		GetLocations(c *gin.Context)
+		GetRoles(c *gin.Context)
+	}
+	var exportHandler interface {
+		ExportJSON(c *gin.Context)
+		ExportCSV(c *gin.Context)
+		ExportText(c *gin.Context)
+	}
 
 	if dbType == "postgres" {
 		// Initialize PostgreSQL
@@ -63,6 +73,9 @@ func main() {
 		// Initialize PostgreSQL handlers
 		authHandler = handlers.NewAuthHandler(db)
 		treeHandler = handlers.NewTreeHandler(db)
+		// Note: Search and export handlers not implemented for PostgreSQL yet
+		// For now, use Firestore for full functionality
+		log.Println("Warning: Search and export handlers not available for PostgreSQL")
 	} else {
 		// Initialize Firestore
 		client, err := database.InitFirestore(ctx)
@@ -74,6 +87,8 @@ func main() {
 		// Initialize Firestore handlers
 		authHandler = handlers.NewFirestoreAuthHandler(client)
 		treeHandler = handlers.NewFirestoreTreeHandler(client)
+		searchHandler = handlers.NewFirestoreSearchHandler(client)
+		exportHandler = handlers.NewFirestoreExportHandler(client)
 	}
 
 	// Setup Gin router
@@ -125,6 +140,28 @@ func main() {
 		{
 			treePublic.GET("", treeHandler.GetAllPeople)
 			treePublic.GET("/:id", treeHandler.GetPerson)
+		}
+
+		// Search routes (authenticated users can search)
+		if searchHandler != nil {
+			search := v1.Group("/search")
+			search.Use(middleware.AuthMiddleware())
+			{
+				search.GET("", searchHandler.SearchPeople)
+				search.GET("/locations", searchHandler.GetLocations)
+				search.GET("/roles", searchHandler.GetRoles)
+			}
+		}
+
+		// Export routes (authenticated users can export)
+		if exportHandler != nil {
+			export := v1.Group("/export")
+			export.Use(middleware.AuthMiddleware())
+			{
+				export.GET("/json", exportHandler.ExportJSON)
+				export.GET("/csv", exportHandler.ExportCSV)
+				export.GET("/text", exportHandler.ExportText)
+			}
 		}
 
 		treeEditor := v1.Group("/tree")

@@ -98,7 +98,7 @@ type CreatePersonRequest struct {
 	Role     string   `json:"role" binding:"required"`
 	Birth    string   `json:"birth" binding:"required"`
 	Location string   `json:"location" binding:"required"`
-	Avatar   string   `json:"avatar" binding:"required"`
+	Avatar   string   `json:"avatar"` // Optional - backend generates default if empty
 	Bio      string   `json:"bio"`
 	Children []string `json:"children"`
 	ParentID *string  `json:"parent_id"` // Optional parent ID - backend will handle the relationship

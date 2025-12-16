@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -20,6 +21,13 @@ type FirestoreTreeHandler struct {
 
 func NewFirestoreTreeHandler(client *firestore.Client) *FirestoreTreeHandler {
 	return &FirestoreTreeHandler{client: client}
+}
+
+// generateDefaultAvatar creates a default avatar URL based on the person's name
+func generateDefaultAvatar(name string) string {
+	// Use DiceBear Avataaars for consistent, reproducible avatars
+	encodedName := url.QueryEscape(name)
+	return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=b6e3f4", encodedName)
 }
 
 // GetAllPeople returns all people in the tree
@@ -96,13 +104,19 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 	// Get user ID from context
 	userID, _ := c.Get("user_id")
 
+	// Generate default avatar if not provided
+	avatar := req.Avatar
+	if avatar == "" {
+		avatar = generateDefaultAvatar(req.Name)
+	}
+
 	person := models.Person{
 		ID:        id,
 		Name:      req.Name,
 		Role:      req.Role,
 		Birth:     req.Birth,
 		Location:  req.Location,
-		Avatar:    req.Avatar,
+		Avatar:    avatar,
 		Bio:       req.Bio,
 		Children:  []string{},
 		CreatedBy: userID.(string),
