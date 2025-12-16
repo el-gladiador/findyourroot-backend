@@ -56,6 +56,13 @@ func main() {
 		ExportCSV(c *gin.Context)
 		ExportText(c *gin.Context)
 	}
+	var identityClaimHandler interface {
+		ClaimIdentity(c *gin.Context)
+		GetMyIdentityClaim(c *gin.Context)
+		GetIdentityClaims(c *gin.Context)
+		ReviewIdentityClaim(c *gin.Context)
+		UnlinkIdentity(c *gin.Context)
+	}
 
 	if dbType == "postgres" {
 		// Initialize PostgreSQL
@@ -73,9 +80,9 @@ func main() {
 		// Initialize PostgreSQL handlers
 		authHandler = handlers.NewAuthHandler(db)
 		treeHandler = handlers.NewTreeHandler(db)
-		// Note: Search and export handlers not implemented for PostgreSQL yet
+		// Note: Search, export, and identity claim handlers not implemented for PostgreSQL yet
 		// For now, use Firestore for full functionality
-		log.Println("Warning: Search and export handlers not available for PostgreSQL")
+		log.Println("Warning: Search, export, and identity claim handlers not available for PostgreSQL")
 	} else {
 		// Initialize Firestore
 		client, err := database.InitFirestore(ctx)
@@ -89,6 +96,7 @@ func main() {
 		treeHandler = handlers.NewFirestoreTreeHandler(client)
 		searchHandler = handlers.NewFirestoreSearchHandler(client)
 		exportHandler = handlers.NewFirestoreExportHandler(client)
+		identityClaimHandler = handlers.NewFirestoreIdentityClaimHandler(client)
 	}
 
 	// Setup Gin router
@@ -125,6 +133,16 @@ func main() {
 			authProtected.POST("/request-permission", authHandler.RequestPermission)
 		}
 
+		// Identity claim routes (authenticated users)
+		if identityClaimHandler != nil {
+			identity := v1.Group("/identity")
+			identity.Use(middleware.AuthMiddleware())
+			{
+				identity.POST("/claim", identityClaimHandler.ClaimIdentity)
+				identity.GET("/my-claim", identityClaimHandler.GetMyIdentityClaim)
+			}
+		}
+
 		// Admin routes
 		admin := v1.Group("/admin")
 		admin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
@@ -132,6 +150,17 @@ func main() {
 			admin.GET("/permission-requests", authHandler.GetPermissionRequests)
 			admin.POST("/permission-requests/:id/approve", authHandler.ApprovePermissionRequest)
 			admin.POST("/permission-requests/:id/reject", authHandler.RejectPermissionRequest)
+		}
+
+		// Admin identity claim routes
+		if identityClaimHandler != nil {
+			adminIdentity := v1.Group("/admin/identity-claims")
+			adminIdentity.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
+			{
+				adminIdentity.GET("", identityClaimHandler.GetIdentityClaims)
+				adminIdentity.POST("/:id/review", identityClaimHandler.ReviewIdentityClaim)
+				adminIdentity.DELETE("/unlink/:user_id", identityClaimHandler.UnlinkIdentity)
+			}
 		}
 
 		// Tree routes - split by permission level

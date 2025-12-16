@@ -22,6 +22,7 @@ type User struct {
 	FatherName   string    `json:"father_name" firestore:"father_name"` // Father's name for verification
 	BirthYear    string    `json:"birth_year" firestore:"birth_year"`   // Birth year for verification
 	IsVerified   bool      `json:"is_verified" firestore:"is_verified"` // Whether user is verified as part of the tree
+	PersonID     string    `json:"person_id" firestore:"person_id"`     // Linked tree node ID (if user claimed identity)
 	CreatedAt    time.Time `json:"created_at" firestore:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at" firestore:"updated_at"`
 }
@@ -38,19 +39,35 @@ type PermissionRequest struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// IdentityClaimRequest represents a request to claim a tree node as oneself
+type IdentityClaimRequest struct {
+	ID          string    `json:"id" firestore:"id"`
+	UserID      string    `json:"user_id" firestore:"user_id"`
+	UserEmail   string    `json:"user_email" firestore:"user_email"`
+	PersonID    string    `json:"person_id" firestore:"person_id"`       // The tree node they claim to be
+	PersonName  string    `json:"person_name" firestore:"person_name"`   // Name of the person for display
+	Message     string    `json:"message" firestore:"message"`           // Why they believe this is them
+	Status      string    `json:"status" firestore:"status"`             // pending, approved, rejected
+	ReviewedBy  string    `json:"reviewed_by" firestore:"reviewed_by"`   // Admin who reviewed
+	ReviewNotes string    `json:"review_notes" firestore:"review_notes"` // Admin's notes
+	CreatedAt   time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" firestore:"updated_at"`
+}
+
 // Person represents a family tree member
 type Person struct {
-	ID        string    `json:"id" firestore:"id"`
-	Name      string    `json:"name" firestore:"name"`
-	Role      string    `json:"role" firestore:"role"`
-	Birth     string    `json:"birth" firestore:"birth"`
-	Location  string    `json:"location" firestore:"location"`
-	Avatar    string    `json:"avatar" firestore:"avatar"`
-	Bio       string    `json:"bio" firestore:"bio"`
-	Children  []string  `json:"children" firestore:"children"`
-	CreatedBy string    `json:"created_by" firestore:"created_by"` // User ID of creator
-	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" firestore:"updated_at"`
+	ID           string    `json:"id" firestore:"id"`
+	Name         string    `json:"name" firestore:"name"`
+	Role         string    `json:"role" firestore:"role"`
+	Birth        string    `json:"birth" firestore:"birth"`
+	Location     string    `json:"location" firestore:"location"`
+	Avatar       string    `json:"avatar" firestore:"avatar"`
+	Bio          string    `json:"bio" firestore:"bio"`
+	Children     []string  `json:"children" firestore:"children"`
+	CreatedBy    string    `json:"created_by" firestore:"created_by"`         // User ID of creator
+	LinkedUserID string    `json:"linked_user_id" firestore:"linked_user_id"` // User ID if someone claimed this identity
+	CreatedAt    time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" firestore:"updated_at"`
 }
 
 // RegisterRequest represents registration data
@@ -113,4 +130,16 @@ type UpdatePersonRequest struct {
 	Avatar   *string  `json:"avatar"`
 	Bio      *string  `json:"bio"`
 	Children []string `json:"children"`
+}
+
+// ClaimIdentityRequest represents a user's request to claim a tree node
+type ClaimIdentityRequest struct {
+	PersonID string `json:"person_id" binding:"required"` // The tree node ID they claim to be
+	Message  string `json:"message"`                      // Why they believe this is them
+}
+
+// ReviewClaimRequest represents admin's review of an identity claim
+type ReviewClaimRequest struct {
+	Approved    bool   `json:"approved"`
+	ReviewNotes string `json:"review_notes"`
 }

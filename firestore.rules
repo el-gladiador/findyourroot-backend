@@ -72,6 +72,18 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     
+    // Identity claims collection
+    // - Users can read their own claims
+    // - Users can create claims (to link their profile to a tree node)
+    // - Only admins can read all and update/delete claims
+    match /identity_claims/{claimId} {
+      allow read: if isAuthenticated() && 
+                    (resource.data.user_id == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
     // Deny access to any other collections by default
     match /{document=**} {
       allow read, write: if false;
