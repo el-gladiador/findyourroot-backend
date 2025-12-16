@@ -1,0 +1,49 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/findyourroots-repo/backend:$COMMIT_SHA'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/findyourroots-repo/backend:latest'
+      - '-f'
+      - 'Dockerfile'
+      - '.'
+
+  # Push the image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/findyourroots-repo/backend:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/findyourroots-repo/backend:latest'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'findyourroot-backend'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/findyourroots-repo/backend:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'GCP_PROJECT_ID=$PROJECT_ID,FIRESTORE_DATABASE_ID=findyourroots-db'
+      - '--set-secrets'
+      - 'JWT_SECRET=jwt-secret:latest'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/findyourroots-repo/backend:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/findyourroots-repo/backend:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
