@@ -14,13 +14,13 @@ import (
 
 // SearchRequest represents search parameters
 type SearchRequest struct {
-	Query      string `form:"q"`
-	Location   string `form:"location"`
-	Role       string `form:"role"`
-	YearFrom   string `form:"year_from"`
-	YearTo     string `form:"year_to"`
-	Page       int    `form:"page"`
-	PageSize   int    `form:"page_size"`
+	Query    string `form:"q"`
+	Location string `form:"location"`
+	Role     string `form:"role"`
+	YearFrom string `form:"year_from"`
+	YearTo   string `form:"year_to"`
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
 }
 
 // SearchResponse represents paginated search results
@@ -130,7 +130,7 @@ func (h *FirestoreSearchHandler) matchesFilters(person models.Person, req Search
 		roleMatch := strings.Contains(strings.ToLower(person.Role), query)
 		locationMatch := strings.Contains(strings.ToLower(person.Location), query)
 		bioMatch := strings.Contains(strings.ToLower(person.Bio), query)
-		
+
 		if !nameMatch && !roleMatch && !locationMatch && !bioMatch {
 			return false
 		}
