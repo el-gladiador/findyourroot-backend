@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -182,6 +183,8 @@ func (h *FirestoreIdentityClaimHandler) GetIdentityClaims(c *gin.Context) {
 	status := c.DefaultQuery("status", "pending")
 	ctx := context.Background()
 
+	log.Printf("[IdentityClaims] Fetching claims with status: %s", status)
+
 	iter := h.client.Collection("identity_claims").
 		Where("status", "==", status).
 		OrderBy("created_at", firestore.Desc).
@@ -195,12 +198,14 @@ func (h *FirestoreIdentityClaimHandler) GetIdentityClaims(c *gin.Context) {
 			break
 		}
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch claims"})
+			log.Printf("[IdentityClaims] Error fetching claims: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch claims: " + err.Error()})
 			return
 		}
 
 		var claim models.IdentityClaimRequest
 		if err := doc.DataTo(&claim); err != nil {
+			log.Printf("[IdentityClaims] Error parsing claim data: %v", err)
 			continue
 		}
 		claims = append(claims, claim)
@@ -210,6 +215,7 @@ func (h *FirestoreIdentityClaimHandler) GetIdentityClaims(c *gin.Context) {
 		claims = []models.IdentityClaimRequest{}
 	}
 
+	log.Printf("[IdentityClaims] Found %d claims with status '%s'", len(claims), status)
 	c.JSON(http.StatusOK, claims)
 }
 
