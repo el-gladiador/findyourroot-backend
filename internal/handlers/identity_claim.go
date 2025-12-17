@@ -372,3 +372,157 @@ func (h *FirestoreIdentityClaimHandler) UnlinkIdentity(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "User unlinked from tree node successfully"})
 }
+
+// LinkUserToPersonRequest represents a request to link a user to a tree node by admin
+type LinkUserToPersonRequest struct {
+	UserID            string `json:"user_id" binding:"required"`
+	PersonID          string `json:"person_id" binding:"required"`
+	InstagramUsername string `json:"instagram_username"`
+}
+
+// LinkUserToPerson allows admin to directly link a user to a tree node (without user request)
+func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
+	var req LinkUserToPersonRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	adminRole, _ := c.Get("role")
+	if adminRole != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can link users to tree nodes"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get user
+	userDoc, err := h.client.Collection("users").Doc(req.UserID).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	var user models.User
+	if err := userDoc.DataTo(&user); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user data"})
+		return
+	}
+
+	if user.PersonID != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User is already linked to a person"})
+		return
+	}
+
+	// Get person
+	personDoc, err := h.client.Collection("people").Doc(req.PersonID).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Person not found"})
+		return
+	}
+
+	var person models.Person
+	if err := personDoc.DataTo(&person); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse person data"})
+		return
+	}
+
+	if person.LinkedUserID != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Person is already linked to another user"})
+		return
+	}
+
+	now := time.Now()
+
+	// Use transaction to link both user and person
+	err = h.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// Update user
+		userRef := h.client.Collection("users").Doc(req.UserID)
+		if err := tx.Update(userRef, []firestore.Update{
+			{Path: "person_id", Value: req.PersonID},
+			{Path: "updated_at", Value: now},
+		}); err != nil {
+			return err
+		}
+
+		// Update person
+		personRef := h.client.Collection("people").Doc(req.PersonID)
+		updates := []firestore.Update{
+			{Path: "linked_user_id", Value: req.UserID},
+			{Path: "updated_at", Value: now},
+		}
+		if req.InstagramUsername != "" {
+			updates = append(updates, firestore.Update{Path: "instagram_username", Value: req.InstagramUsername})
+		}
+		if err := tx.Update(personRef, updates); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to link user to person"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User linked to tree node successfully"})
+}
+
+// UpdatePersonInstagramRequest represents a request to update person's Instagram
+type UpdatePersonInstagramRequest struct {
+	InstagramUsername string `json:"instagram_username" binding:"required"`
+}
+
+// UpdatePersonInstagram allows admin to update a person's Instagram username
+func (h *FirestoreIdentityClaimHandler) UpdatePersonInstagram(c *gin.Context) {
+	personID := c.Param("person_id")
+
+	var req UpdatePersonInstagramRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	adminRole, _ := c.Get("role")
+	if adminRole != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can update Instagram usernames"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get person
+	personDoc, err := h.client.Collection("people").Doc(personID).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Person not found"})
+		return
+	}
+
+	var person models.Person
+	if err := personDoc.DataTo(&person); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse person data"})
+		return
+	}
+
+	// Person must be linked to a user to have Instagram
+	if person.LinkedUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Person must be linked to a user before adding Instagram"})
+		return
+	}
+
+	now := time.Now()
+
+	// Update person
+	_, err = h.client.Collection("people").Doc(personID).Update(ctx, []firestore.Update{
+		{Path: "instagram_username", Value: req.InstagramUsername},
+		{Path: "updated_at", Value: now},
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Instagram"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Instagram username updated successfully"})
+}

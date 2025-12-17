@@ -193,6 +193,14 @@ func main() {
 				adminIdentity.POST("/:id/review", identityClaimHandler.ReviewIdentityClaim)
 				adminIdentity.DELETE("/unlink/:user_id", identityClaimHandler.UnlinkIdentity)
 			}
+
+			// Admin-only routes for linking users to tree nodes
+			adminLink := v1.Group("/admin")
+			adminLink.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
+			{
+				adminLink.POST("/link-user-to-person", identityClaimHandler.LinkUserToPerson)
+				adminLink.PUT("/person/:person_id/instagram", identityClaimHandler.UpdatePersonInstagram)
+			}
 		}
 
 		// Suggestion routes (for contributors)
