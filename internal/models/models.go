@@ -84,14 +84,14 @@ type User struct {
 
 // PermissionRequest represents a request for elevated permissions
 type PermissionRequest struct {
-	ID            string    `json:"id"`
-	UserID        string    `json:"user_id"`
-	UserEmail     string    `json:"user_email"`
-	RequestedRole UserRole  `json:"requested_role"`
-	Message       string    `json:"message"`
-	Status        string    `json:"status"` // pending, approved, rejected
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            string    `json:"id" firestore:"id"`
+	UserID        string    `json:"user_id" firestore:"user_id"`
+	UserEmail     string    `json:"user_email" firestore:"user_email"`
+	RequestedRole UserRole  `json:"requested_role" firestore:"requested_role"`
+	Message       string    `json:"message" firestore:"message"`
+	Status        string    `json:"status" firestore:"status"` // pending, approved, rejected
+	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at" firestore:"updated_at"`
 }
 
 // IdentityClaimRequest represents a request to claim a tree node as oneself
