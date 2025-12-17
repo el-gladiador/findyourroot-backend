@@ -114,13 +114,13 @@ type Person struct {
 	Name              string    `json:"name" firestore:"name"`
 	Role              string    `json:"role" firestore:"role"`
 	Birth             string    `json:"birth" firestore:"birth"`
-	Location          string    `json:"location" firestore:"location"`                       // Legacy, optional
+	Location          string    `json:"location" firestore:"location"` // Legacy, optional
 	Avatar            string    `json:"avatar" firestore:"avatar"`
-	Bio               string    `json:"bio" firestore:"bio"`                                 // Legacy, optional
+	Bio               string    `json:"bio" firestore:"bio"` // Legacy, optional
 	Children          []string  `json:"children" firestore:"children"`
-	CreatedBy         string    `json:"created_by" firestore:"created_by"`                   // User ID of creator
-	LinkedUserID      string    `json:"linked_user_id" firestore:"linked_user_id"`           // User ID if someone claimed this identity
-	InstagramUsername string    `json:"instagram_username" firestore:"instagram_username"`   // Instagram handle
+	CreatedBy         string    `json:"created_by" firestore:"created_by"`                 // User ID of creator
+	LinkedUserID      string    `json:"linked_user_id" firestore:"linked_user_id"`         // User ID if someone claimed this identity
+	InstagramUsername string    `json:"instagram_username" firestore:"instagram_username"` // Instagram handle
 	CreatedAt         time.Time `json:"created_at" firestore:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at" firestore:"updated_at"`
 }
@@ -168,10 +168,10 @@ type LoginResponse struct {
 type CreatePersonRequest struct {
 	Name     string   `json:"name" binding:"required"`
 	Role     string   `json:"role" binding:"required"`
-	Birth    string   `json:"birth"`     // Optional
-	Location string   `json:"location"`  // Legacy, optional
-	Avatar   string   `json:"avatar"`    // Optional - backend generates default if empty
-	Bio      string   `json:"bio"`       // Legacy, optional
+	Birth    string   `json:"birth"`    // Optional
+	Location string   `json:"location"` // Legacy, optional
+	Avatar   string   `json:"avatar"`   // Optional - backend generates default if empty
+	Bio      string   `json:"bio"`      // Legacy, optional
 	Children []string `json:"children"`
 	ParentID *string  `json:"parent_id"` // Optional parent ID - backend will handle the relationship
 }
