@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/mamiri/findyourroot/internal/models"
 )
 
 // Claims represents JWT claims
@@ -67,7 +68,32 @@ func AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// RequireEditor ensures user has at least editor role
+// RequireContributor ensures user has at least contributor role (can make suggestions)
+func RequireContributor() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.Abort()
+			return
+		}
+
+		userClaims := claims.(*Claims)
+		role := models.UserRole(userClaims.Role)
+
+		// Contributors and above can make suggestions
+		if role != models.RoleContributor && role != models.RoleEditor &&
+			role != models.RoleCoAdmin && role != models.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Contributor access required", "required_role": "contributor"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// RequireEditor ensures user has at least editor role (can edit directly)
 func RequireEditor() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, exists := c.Get("claims")
@@ -78,7 +104,10 @@ func RequireEditor() gin.HandlerFunc {
 		}
 
 		userClaims := claims.(*Claims)
-		if userClaims.Role != "editor" && userClaims.Role != "admin" {
+		role := models.UserRole(userClaims.Role)
+
+		// Editor, co-admin, and admin can edit directly
+		if !role.CanEditDirectly() {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Editor or Admin access required", "required_role": "editor"})
 			c.Abort()
 			return
@@ -88,7 +117,30 @@ func RequireEditor() gin.HandlerFunc {
 	}
 }
 
-// RequireAdmin ensures user has admin role
+// RequireApprover ensures user can approve/reject suggestions (co-admin or admin)
+func RequireApprover() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.Abort()
+			return
+		}
+
+		userClaims := claims.(*Claims)
+		role := models.UserRole(userClaims.Role)
+
+		if !role.CanApprove() {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Co-Admin or Admin access required", "required_role": "co-admin"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// RequireAdmin ensures user has admin role (tree owner - can manage users)
 func RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, exists := c.Get("claims")
@@ -99,7 +151,9 @@ func RequireAdmin() gin.HandlerFunc {
 		}
 
 		userClaims := claims.(*Claims)
-		if userClaims.Role != "admin" {
+		role := models.UserRole(userClaims.Role)
+
+		if !role.CanManageUsers() {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required", "required_role": "admin"})
 			c.Abort()
 			return

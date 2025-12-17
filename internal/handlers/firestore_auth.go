@@ -504,3 +504,156 @@ func (h *FirestoreAuthHandler) RejectPermissionRequest(c *gin.Context) {
 		"user":    req.UserEmail,
 	})
 }
+
+// GetAllUsers returns all users (admin only)
+func (h *FirestoreAuthHandler) GetAllUsers(c *gin.Context) {
+	ctx := context.Background()
+
+	iter := h.client.Collection("users").Documents(ctx)
+	defer iter.Stop()
+
+	var users []models.UserListResponse
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
+			return
+		}
+
+		var user models.User
+		if err := doc.DataTo(&user); err != nil {
+			continue
+		}
+
+		users = append(users, models.UserListResponse{
+			ID:         doc.Ref.ID,
+			Email:      user.Email,
+			Role:       user.Role,
+			TreeName:   user.TreeName,
+			IsVerified: user.IsVerified,
+			PersonID:   user.PersonID,
+			CreatedAt:  user.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	if users == nil {
+		users = []models.UserListResponse{}
+	}
+
+	// Sort by email
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].Email < users[j].Email
+	})
+
+	c.JSON(http.StatusOK, users)
+}
+
+// UpdateUserRole changes a user's role (admin only)
+func (h *FirestoreAuthHandler) UpdateUserRole(c *gin.Context) {
+	adminID, _ := c.Get("user_id")
+	targetUserID := c.Param("id")
+
+	// Prevent admin from changing their own role
+	if adminID.(string) == targetUserID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot change your own role"})
+		return
+	}
+
+	var req models.UpdateUserRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// Validate role
+	validRoles := map[models.UserRole]bool{
+		models.RoleViewer:      true,
+		models.RoleContributor: true,
+		models.RoleEditor:      true,
+		models.RoleCoAdmin:     true,
+		models.RoleAdmin:       true,
+	}
+	if !validRoles[req.Role] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role. Must be viewer, contributor, editor, co-admin, or admin"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get the target user
+	doc, err := h.client.Collection("users").Doc(targetUserID).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	var targetUser models.User
+	if err := doc.DataTo(&targetUser); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user data"})
+		return
+	}
+
+	// Update user role
+	isAdmin := req.Role == models.RoleAdmin
+	_, err = h.client.Collection("users").Doc(targetUserID).Update(ctx, []firestore.Update{
+		{Path: "role", Value: req.Role},
+		{Path: "is_admin", Value: isAdmin},
+		{Path: "updated_at", Value: time.Now()},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user role"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User role updated",
+		"user":    targetUser.Email,
+		"role":    req.Role,
+	})
+}
+
+// RevokeUserAccess revokes a user's access (sets to viewer)
+func (h *FirestoreAuthHandler) RevokeUserAccess(c *gin.Context) {
+	adminID, _ := c.Get("user_id")
+	targetUserID := c.Param("id")
+
+	// Prevent admin from revoking their own access
+	if adminID.(string) == targetUserID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot revoke your own access"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get the target user
+	doc, err := h.client.Collection("users").Doc(targetUserID).Get(ctx)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	var targetUser models.User
+	if err := doc.DataTo(&targetUser); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user data"})
+		return
+	}
+
+	// Set role to viewer
+	_, err = h.client.Collection("users").Doc(targetUserID).Update(ctx, []firestore.Update{
+		{Path: "role", Value: models.RoleViewer},
+		{Path: "is_admin", Value: false},
+		{Path: "updated_at", Value: time.Now()},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke access"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User access revoked",
+		"user":    targetUser.Email,
+	})
+}

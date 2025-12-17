@@ -38,6 +38,11 @@ func main() {
 		ApprovePermissionRequest(c *gin.Context)
 		RejectPermissionRequest(c *gin.Context)
 	}
+	var userMgmtHandler interface {
+		GetAllUsers(c *gin.Context)
+		UpdateUserRole(c *gin.Context)
+		RevokeUserAccess(c *gin.Context)
+	}
 	var treeHandler interface {
 		GetAllPeople(c *gin.Context)
 		GetPerson(c *gin.Context)
@@ -62,6 +67,12 @@ func main() {
 		GetIdentityClaims(c *gin.Context)
 		ReviewIdentityClaim(c *gin.Context)
 		UnlinkIdentity(c *gin.Context)
+	}
+	var suggestionHandler interface {
+		CreateSuggestion(c *gin.Context)
+		GetMySuggestions(c *gin.Context)
+		GetAllSuggestions(c *gin.Context)
+		ReviewSuggestion(c *gin.Context)
 	}
 
 	if dbType == "postgres" {
@@ -92,11 +103,14 @@ func main() {
 		defer client.Close()
 
 		// Initialize Firestore handlers
-		authHandler = handlers.NewFirestoreAuthHandler(client)
+		firestoreAuthHandler := handlers.NewFirestoreAuthHandler(client)
+		authHandler = firestoreAuthHandler
+		userMgmtHandler = firestoreAuthHandler
 		treeHandler = handlers.NewFirestoreTreeHandler(client)
 		searchHandler = handlers.NewFirestoreSearchHandler(client)
 		exportHandler = handlers.NewFirestoreExportHandler(client)
 		identityClaimHandler = handlers.NewFirestoreIdentityClaimHandler(client)
+		suggestionHandler = handlers.NewFirestoreSuggestionHandler(client)
 	}
 
 	// Setup Gin router
@@ -152,6 +166,17 @@ func main() {
 			admin.POST("/permission-requests/:id/reject", authHandler.RejectPermissionRequest)
 		}
 
+		// User management routes (admin only - requires Firestore)
+		if userMgmtHandler != nil {
+			userMgmt := v1.Group("/admin/users")
+			userMgmt.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
+			{
+				userMgmt.GET("", userMgmtHandler.GetAllUsers)
+				userMgmt.PUT("/:id/role", userMgmtHandler.UpdateUserRole)
+				userMgmt.DELETE("/:id/access", userMgmtHandler.RevokeUserAccess)
+			}
+		}
+
 		// Admin identity claim routes
 		if identityClaimHandler != nil {
 			adminIdentity := v1.Group("/admin/identity-claims")
@@ -160,6 +185,25 @@ func main() {
 				adminIdentity.GET("", identityClaimHandler.GetIdentityClaims)
 				adminIdentity.POST("/:id/review", identityClaimHandler.ReviewIdentityClaim)
 				adminIdentity.DELETE("/unlink/:user_id", identityClaimHandler.UnlinkIdentity)
+			}
+		}
+
+		// Suggestion routes (for contributors)
+		if suggestionHandler != nil {
+			suggestions := v1.Group("/suggestions")
+			suggestions.Use(middleware.AuthMiddleware())
+			{
+				// Contributors can create suggestions and view their own
+				suggestions.POST("", middleware.RequireContributor(), suggestionHandler.CreateSuggestion)
+				suggestions.GET("/my", suggestionHandler.GetMySuggestions)
+			}
+
+			// Admin/co-admin can view all suggestions and review them
+			suggestionsAdmin := v1.Group("/admin/suggestions")
+			suggestionsAdmin.Use(middleware.AuthMiddleware(), middleware.RequireApprover())
+			{
+				suggestionsAdmin.GET("", suggestionHandler.GetAllSuggestions)
+				suggestionsAdmin.POST("/:id/review", suggestionHandler.ReviewSuggestion)
 			}
 		}
 

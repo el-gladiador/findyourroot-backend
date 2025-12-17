@@ -6,10 +6,63 @@ import "time"
 type UserRole string
 
 const (
-	RoleViewer UserRole = "viewer" // Can only view the tree
-	RoleEditor UserRole = "editor" // Can add/edit/delete in the tree
-	RoleAdmin  UserRole = "admin"  // Full access + user management
+	RoleViewer      UserRole = "viewer"      // Can only view the tree
+	RoleContributor UserRole = "contributor" // Can suggest add/edit/delete (needs approval)
+	RoleEditor      UserRole = "editor"      // Can add/edit/delete directly (legacy - same as co-admin now)
+	RoleCoAdmin     UserRole = "co-admin"    // Can add/edit/delete + approve suggestions
+	RoleAdmin       UserRole = "admin"       // Full access + manage users + manage co-admins (tree owner)
 )
+
+// CanApprove returns true if the role can approve/reject suggestions
+func (r UserRole) CanApprove() bool {
+	return r == RoleCoAdmin || r == RoleAdmin
+}
+
+// CanEditDirectly returns true if the role can edit the tree without approval
+func (r UserRole) CanEditDirectly() bool {
+	return r == RoleEditor || r == RoleCoAdmin || r == RoleAdmin
+}
+
+// CanManageUsers returns true if the role can manage other users' roles
+func (r UserRole) CanManageUsers() bool {
+	return r == RoleAdmin
+}
+
+// SuggestionType represents the type of tree edit suggestion
+type SuggestionType string
+
+const (
+	SuggestionAdd    SuggestionType = "add"
+	SuggestionEdit   SuggestionType = "edit"
+	SuggestionDelete SuggestionType = "delete"
+)
+
+// Suggestion represents a suggested change to the family tree
+type Suggestion struct {
+	ID             string         `json:"id" firestore:"id"`
+	Type           SuggestionType `json:"type" firestore:"type"`                         // add, edit, delete
+	TargetPersonID string         `json:"target_person_id" firestore:"target_person_id"` // For edit/delete: the person to modify; For add: the parent ID
+	PersonData     *PersonData    `json:"person_data" firestore:"person_data"`           // The suggested person data (for add/edit)
+	Message        string         `json:"message" firestore:"message"`                   // Explanation from contributor
+	Status         string         `json:"status" firestore:"status"`                     // pending, approved, rejected
+	UserID         string         `json:"user_id" firestore:"user_id"`                   // Who made the suggestion
+	UserEmail      string         `json:"user_email" firestore:"user_email"`
+	ReviewedBy     string         `json:"reviewed_by" firestore:"reviewed_by"` // Admin/co-admin who reviewed
+	ReviewerEmail  string         `json:"reviewer_email" firestore:"reviewer_email"`
+	ReviewNotes    string         `json:"review_notes" firestore:"review_notes"` // Notes from reviewer
+	CreatedAt      time.Time      `json:"created_at" firestore:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at" firestore:"updated_at"`
+}
+
+// PersonData holds the data for a person (used in suggestions)
+type PersonData struct {
+	Name     string `json:"name" firestore:"name"`
+	Role     string `json:"role" firestore:"role"`
+	Birth    string `json:"birth" firestore:"birth"`
+	Location string `json:"location" firestore:"location"`
+	Avatar   string `json:"avatar" firestore:"avatar"`
+	Bio      string `json:"bio" firestore:"bio"`
+}
 
 // User represents a user in the system
 type User struct {
@@ -142,4 +195,52 @@ type ClaimIdentityRequest struct {
 type ReviewClaimRequest struct {
 	Approved    bool   `json:"approved"`
 	ReviewNotes string `json:"review_notes"`
+}
+
+// CreateSuggestionRequest represents a request to suggest a tree change
+type CreateSuggestionRequest struct {
+	Type           SuggestionType `json:"type" binding:"required"` // add, edit, delete
+	TargetPersonID string         `json:"target_person_id"`        // Required for edit/delete; parent ID for add
+	PersonData     *PersonData    `json:"person_data"`             // Required for add/edit
+	Message        string         `json:"message"`                 // Explanation from contributor
+}
+
+// ReviewSuggestionRequest represents admin/co-admin review of a suggestion
+type ReviewSuggestionRequest struct {
+	Approved    bool   `json:"approved"`
+	ReviewNotes string `json:"review_notes"`
+}
+
+// UpdateUserRoleRequest represents a request to change a user's role
+type UpdateUserRoleRequest struct {
+	Role UserRole `json:"role" binding:"required"`
+}
+
+// UserListResponse represents a user in the admin user list
+type UserListResponse struct {
+	ID         string   `json:"id"`
+	Email      string   `json:"email"`
+	Role       UserRole `json:"role"`
+	TreeName   string   `json:"tree_name"`
+	IsVerified bool     `json:"is_verified"`
+	PersonID   string   `json:"person_id"`
+	CreatedAt  string   `json:"created_at"`
+}
+
+// SuggestionResponse represents a suggestion in API responses
+type SuggestionResponse struct {
+	ID             string      `json:"id"`
+	Type           string      `json:"type"`
+	TargetPersonID string      `json:"target_person_id"`
+	TargetPerson   *Person     `json:"target_person,omitempty"` // Populated for edit/delete
+	PersonData     *PersonData `json:"person_data,omitempty"`
+	Message        string      `json:"message"`
+	Status         string      `json:"status"`
+	UserID         string      `json:"user_id"`
+	UserEmail      string      `json:"user_email"`
+	ReviewedBy     string      `json:"reviewed_by,omitempty"`
+	ReviewerEmail  string      `json:"reviewer_email,omitempty"`
+	ReviewNotes    string      `json:"review_notes,omitempty"`
+	CreatedAt      string      `json:"created_at"`
+	UpdatedAt      string      `json:"updated_at"`
 }
