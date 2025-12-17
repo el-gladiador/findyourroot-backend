@@ -297,8 +297,8 @@ func (h *FirestoreAuthHandler) RequestPermission(c *gin.Context) {
 		return
 	}
 
-	if req.RequestedRole != models.RoleEditor && req.RequestedRole != models.RoleAdmin {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role requested. Must be 'editor' or 'admin'"})
+	if req.RequestedRole != models.RoleContributor && req.RequestedRole != models.RoleEditor && req.RequestedRole != models.RoleCoAdmin && req.RequestedRole != models.RoleAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role requested. Must be 'contributor', 'editor', 'co-admin', or 'admin'"})
 		return
 	}
 
