@@ -69,6 +69,7 @@ func main() {
 		UnlinkIdentity(c *gin.Context)
 		LinkUserToPerson(c *gin.Context)
 		UpdatePersonInstagram(c *gin.Context)
+		LookupInstagramProfile(c *gin.Context)
 	}
 	var suggestionHandler interface {
 		CreateSuggestion(c *gin.Context)
@@ -202,6 +203,7 @@ func main() {
 			{
 				adminLink.POST("/link-user-to-person", identityClaimHandler.LinkUserToPerson)
 				adminLink.PUT("/person/:person_id/instagram", identityClaimHandler.UpdatePersonInstagram)
+				adminLink.GET("/instagram/lookup", identityClaimHandler.LookupInstagramProfile)
 			}
 		}
 

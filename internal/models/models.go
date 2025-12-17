@@ -56,13 +56,14 @@ type Suggestion struct {
 
 // PersonData holds the data for a person (used in suggestions)
 type PersonData struct {
-	Name              string `json:"name" firestore:"name"`
-	Role              string `json:"role" firestore:"role"`
-	Birth             string `json:"birth" firestore:"birth"`
-	Location          string `json:"location" firestore:"location"`
-	Avatar            string `json:"avatar" firestore:"avatar"`
-	Bio               string `json:"bio" firestore:"bio"`
-	InstagramUsername string `json:"instagram_username" firestore:"instagram_username"`
+	Name               string `json:"name" firestore:"name"`
+	Role               string `json:"role" firestore:"role"`
+	Birth              string `json:"birth" firestore:"birth"`
+	Location           string `json:"location" firestore:"location"`
+	Avatar             string `json:"avatar" firestore:"avatar"`
+	Bio                string `json:"bio" firestore:"bio"`
+	InstagramUsername  string `json:"instagram_username" firestore:"instagram_username"`
+	InstagramAvatarURL string `json:"instagram_avatar_url" firestore:"instagram_avatar_url"`
 }
 
 // User represents a user in the system
@@ -110,19 +111,20 @@ type IdentityClaimRequest struct {
 
 // Person represents a family tree member
 type Person struct {
-	ID                string    `json:"id" firestore:"id"`
-	Name              string    `json:"name" firestore:"name"`
-	Role              string    `json:"role" firestore:"role"`
-	Birth             string    `json:"birth" firestore:"birth"`
-	Location          string    `json:"location" firestore:"location"` // Legacy, optional
-	Avatar            string    `json:"avatar" firestore:"avatar"`
-	Bio               string    `json:"bio" firestore:"bio"` // Legacy, optional
-	Children          []string  `json:"children" firestore:"children"`
-	CreatedBy         string    `json:"created_by" firestore:"created_by"`                 // User ID of creator
-	LinkedUserID      string    `json:"linked_user_id" firestore:"linked_user_id"`         // User ID if someone claimed this identity
-	InstagramUsername string    `json:"instagram_username" firestore:"instagram_username"` // Instagram handle
-	CreatedAt         time.Time `json:"created_at" firestore:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at" firestore:"updated_at"`
+	ID                 string    `json:"id" firestore:"id"`
+	Name               string    `json:"name" firestore:"name"`
+	Role               string    `json:"role" firestore:"role"`
+	Birth              string    `json:"birth" firestore:"birth"`
+	Location           string    `json:"location" firestore:"location"` // Legacy, optional
+	Avatar             string    `json:"avatar" firestore:"avatar"`
+	Bio                string    `json:"bio" firestore:"bio"` // Legacy, optional
+	Children           []string  `json:"children" firestore:"children"`
+	CreatedBy          string    `json:"created_by" firestore:"created_by"`                     // User ID of creator
+	LinkedUserID       string    `json:"linked_user_id" firestore:"linked_user_id"`             // User ID if someone claimed this identity
+	InstagramUsername  string    `json:"instagram_username" firestore:"instagram_username"`     // Instagram handle
+	InstagramAvatarURL string    `json:"instagram_avatar_url" firestore:"instagram_avatar_url"` // Cached Instagram profile picture URL
+	CreatedAt          time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at" firestore:"updated_at"`
 }
 
 // RegisterRequest represents registration data

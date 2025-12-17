@@ -4,12 +4,14 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/mamiri/findyourroot/internal/models"
+	"github.com/mamiri/findyourroot/internal/utils"
 	"google.golang.org/api/iterator"
 )
 
@@ -434,6 +436,17 @@ func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
 
 	now := time.Now()
 
+	// If Instagram username provided, try to fetch the profile picture
+	instagramUsername := strings.TrimPrefix(req.InstagramUsername, "@")
+	var instagramAvatarURL string
+	if instagramUsername != "" {
+		profile, err := utils.FetchInstagramProfile(instagramUsername)
+		if err == nil && profile != nil {
+			instagramAvatarURL = profile.AvatarURL
+		}
+		// Don't fail if Instagram fetch fails - just continue without avatar
+	}
+
 	// Use transaction to link both user and person
 	err = h.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		// Update user
@@ -451,8 +464,11 @@ func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
 			{Path: "linked_user_id", Value: req.UserID},
 			{Path: "updated_at", Value: now},
 		}
-		if req.InstagramUsername != "" {
-			updates = append(updates, firestore.Update{Path: "instagram_username", Value: req.InstagramUsername})
+		if instagramUsername != "" {
+			updates = append(updates, firestore.Update{Path: "instagram_username", Value: instagramUsername})
+		}
+		if instagramAvatarURL != "" {
+			updates = append(updates, firestore.Update{Path: "instagram_avatar_url", Value: instagramAvatarURL})
 		}
 		if err := tx.Update(personRef, updates); err != nil {
 			return err
@@ -525,4 +541,34 @@ func (h *FirestoreIdentityClaimHandler) UpdatePersonInstagram(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Instagram username updated successfully"})
+}
+
+// LookupInstagramProfile allows admin to lookup an Instagram profile before linking
+func (h *FirestoreIdentityClaimHandler) LookupInstagramProfile(c *gin.Context) {
+	username := c.Query("username")
+	if username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username is required"})
+		return
+	}
+
+	username = strings.TrimPrefix(username, "@")
+
+	if !utils.ValidateInstagramUsername(username) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Instagram username format"})
+		return
+	}
+
+	profile, err := utils.FetchInstagramProfile(username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Instagram profile not found or unavailable"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"username":    profile.Username,
+		"full_name":   profile.FullName,
+		"avatar_url":  profile.AvatarURL,
+		"bio":         profile.Bio,
+		"is_verified": profile.IsVerified,
+	})
 }
