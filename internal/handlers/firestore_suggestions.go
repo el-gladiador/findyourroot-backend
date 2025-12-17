@@ -174,7 +174,7 @@ func (h *FirestoreSuggestionHandler) GetAllSuggestions(c *gin.Context) {
 	status := c.DefaultQuery("status", "pending")
 	email, _ := c.Get("email")
 	role, _ := c.Get("role")
-	
+
 	log.Printf("[GetAllSuggestions] Request from %s (role: %s), filter status: %s", email, role, status)
 
 	ctx := context.Background()
@@ -207,7 +207,7 @@ func (h *FirestoreSuggestionHandler) GetAllSuggestions(c *gin.Context) {
 	if suggestions == nil {
 		suggestions = []models.SuggestionResponse{}
 	}
-	
+
 	log.Printf("[GetAllSuggestions] Found %d suggestions with status '%s'", len(suggestions), status)
 
 	// Sort by created_at descending
