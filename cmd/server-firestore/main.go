@@ -74,6 +74,7 @@ func main() {
 		GetAllSuggestions(c *gin.Context)
 		ReviewSuggestion(c *gin.Context)
 	}
+	var sseHandler *handlers.SSEHandler
 
 	if dbType == "postgres" {
 		// Initialize PostgreSQL
@@ -111,6 +112,7 @@ func main() {
 		exportHandler = handlers.NewFirestoreExportHandler(client)
 		identityClaimHandler = handlers.NewFirestoreIdentityClaimHandler(client)
 		suggestionHandler = handlers.NewFirestoreSuggestionHandler(client)
+		sseHandler = handlers.NewSSEHandler(client)
 	}
 
 	// Setup Gin router
@@ -132,6 +134,11 @@ func main() {
 	// API v1 routes
 	v1 := router.Group("/api/v1")
 	{
+		// SSE stream for real-time updates (auth handled in handler via query param)
+		if sseHandler != nil {
+			v1.GET("/stream/admin", sseHandler.AdminStream)
+		}
+
 		// Public routes
 		auth := v1.Group("/auth")
 		{
