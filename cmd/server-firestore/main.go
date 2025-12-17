@@ -67,6 +67,8 @@ func main() {
 		GetIdentityClaims(c *gin.Context)
 		ReviewIdentityClaim(c *gin.Context)
 		UnlinkIdentity(c *gin.Context)
+		LinkUserToPerson(c *gin.Context)
+		UpdatePersonInstagram(c *gin.Context)
 	}
 	var suggestionHandler interface {
 		CreateSuggestion(c *gin.Context)
