@@ -172,6 +172,10 @@ func (h *FirestoreSuggestionHandler) GetMySuggestions(c *gin.Context) {
 // GetAllSuggestions returns all suggestions (for admins/co-admins)
 func (h *FirestoreSuggestionHandler) GetAllSuggestions(c *gin.Context) {
 	status := c.DefaultQuery("status", "pending")
+	email, _ := c.Get("email")
+	role, _ := c.Get("role")
+	
+	log.Printf("[GetAllSuggestions] Request from %s (role: %s), filter status: %s", email, role, status)
 
 	ctx := context.Background()
 
@@ -185,12 +189,14 @@ func (h *FirestoreSuggestionHandler) GetAllSuggestions(c *gin.Context) {
 			break
 		}
 		if err != nil {
+			log.Printf("[GetAllSuggestions] Error fetching suggestions: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch suggestions"})
 			return
 		}
 
 		var s models.Suggestion
 		if err := doc.DataTo(&s); err != nil {
+			log.Printf("[GetAllSuggestions] Error parsing suggestion %s: %v", doc.Ref.ID, err)
 			continue
 		}
 
@@ -201,6 +207,8 @@ func (h *FirestoreSuggestionHandler) GetAllSuggestions(c *gin.Context) {
 	if suggestions == nil {
 		suggestions = []models.SuggestionResponse{}
 	}
+	
+	log.Printf("[GetAllSuggestions] Found %d suggestions with status '%s'", len(suggestions), status)
 
 	// Sort by created_at descending
 	sort.Slice(suggestions, func(i, j int) bool {
