@@ -123,6 +123,8 @@ type Person struct {
 	LinkedUserID       string    `json:"linked_user_id" firestore:"linked_user_id"`             // User ID if someone claimed this identity
 	InstagramUsername  string    `json:"instagram_username" firestore:"instagram_username"`     // Instagram handle
 	InstagramAvatarURL string    `json:"instagram_avatar_url" firestore:"instagram_avatar_url"` // Cached Instagram profile picture URL
+	LikesCount         int       `json:"likes_count" firestore:"likes_count"`                   // Number of likes
+	LikedBy            []string  `json:"liked_by" firestore:"liked_by"`                         // User IDs who liked
 	CreatedAt          time.Time `json:"created_at" firestore:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at" firestore:"updated_at"`
 }
