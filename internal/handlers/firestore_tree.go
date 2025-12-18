@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -183,6 +184,12 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 		avatar = generateDefaultAvatar(req.Name)
 	}
 
+	// Use children from request if provided, otherwise empty
+	children := req.Children
+	if children == nil {
+		children = []string{}
+	}
+
 	person := models.Person{
 		ID:        id,
 		Name:      req.Name,
@@ -191,10 +198,56 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 		Location:  req.Location,
 		Avatar:    avatar,
 		Bio:       req.Bio,
-		Children:  []string{},
+		Children:  children,
 		CreatedBy: userID.(string),
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+
+	// If children are provided (adding as parent of existing nodes), handle the relationship
+	if len(children) > 0 {
+		err := h.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+			// First, remove these children from their current parents
+			for _, childID := range children {
+				// Find current parent of this child
+				iter := h.client.Collection("people").Where("children", "array-contains", childID).Documents(ctx)
+				for {
+					doc, err := iter.Next()
+					if err != nil {
+						break // No more parents found
+					}
+					// Remove child from old parent
+					if err := tx.Update(doc.Ref, []firestore.Update{
+						{Path: "children", Value: firestore.ArrayRemove(childID)},
+						{Path: "updated_at", Value: now},
+					}); err != nil {
+						log.Printf("[CreatePerson] Error removing child from old parent: %v", err)
+						return err
+					}
+					log.Printf("[CreatePerson] Removed child %s from old parent %s", childID, doc.Ref.ID)
+				}
+			}
+
+			// Create the new parent person
+			personRef := h.client.Collection("people").Doc(id)
+			if err := tx.Set(personRef, person); err != nil {
+				log.Printf("[CreatePerson] Error creating person: %v", err)
+				return err
+			}
+			log.Printf("[CreatePerson] Created new parent: %s with children: %v", person.Name, children)
+
+			return nil
+		})
+
+		if err != nil {
+			log.Printf("[CreatePerson] Transaction failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create person as parent: %v", err)})
+			return
+		}
+		log.Printf("[CreatePerson] Transaction completed successfully")
+
+		c.JSON(http.StatusCreated, person)
+		return
 	}
 
 	// If parentID is provided, use a transaction to create person and update parent atomically
@@ -606,5 +659,151 @@ func (h *FirestoreTreeHandler) CheckDuplicateName(c *gin.Context) {
 		"input_name":     req.Name,
 		"normalized":     utils.NormalizePersianNameKeepSpaces(req.Name),
 		"ai_enhanced":    aiUsed,
+	})
+}
+
+// PopulateTreeRequest represents a request to populate tree from indented text
+type PopulateTreeRequest struct {
+	Text string `json:"text" binding:"required"`
+}
+
+// ParsedPerson represents a person parsed from text with their level
+type ParsedPerson struct {
+	Name     string
+	Level    int
+	Children []string
+}
+
+// PopulateTreeFromText parses indentation-based text and creates the tree (admin only)
+func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
+	var req PopulateTreeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get user ID from context
+	userID, _ := c.Get("user_id")
+
+	// Parse the text into tree structure
+	lines := strings.Split(req.Text, "\n")
+
+	type PersonNode struct {
+		Name     string
+		Level    int
+		ID       string
+		Children []string
+	}
+
+	var nodes []PersonNode
+
+	for _, line := range lines {
+		// Skip empty lines
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		// Count leading whitespace to determine level
+		originalLen := len(line)
+		trimmedLine := strings.TrimLeft(line, " \t")
+		leadingSpaces := originalLen - len(trimmedLine)
+
+		// Calculate level: tabs count as 4 spaces, or detect space-based indentation
+		level := 0
+		for i := 0; i < len(line) && (line[i] == ' ' || line[i] == '\t'); i++ {
+			if line[i] == '\t' {
+				level += 4
+			} else {
+				level++
+			}
+		}
+		// Normalize to levels (2 or 4 spaces per level)
+		if leadingSpaces > 0 {
+			// Detect indentation style from first indented line
+			if level >= 4 {
+				level = level / 4
+			} else {
+				level = level / 2
+			}
+		} else {
+			level = 0
+		}
+
+		name := strings.TrimSpace(trimmedLine)
+		if name == "" {
+			continue
+		}
+
+		nodes = append(nodes, PersonNode{
+			Name:     name,
+			Level:    level,
+			ID:       uuid.New().String(),
+			Children: []string{},
+		})
+	}
+
+	if len(nodes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid entries found in text"})
+		return
+	}
+
+	// Build parent-child relationships
+	// Use a stack to track parents at each level
+	stack := make([]*PersonNode, 0)
+
+	for i := range nodes {
+		node := &nodes[i]
+
+		// Pop from stack until we find a parent with lower level
+		for len(stack) > 0 && stack[len(stack)-1].Level >= node.Level {
+			stack = stack[:len(stack)-1]
+		}
+
+		// If stack is not empty, the top is this node's parent
+		if len(stack) > 0 {
+			parent := stack[len(stack)-1]
+			parent.Children = append(parent.Children, node.ID)
+		}
+
+		// Push this node onto the stack
+		stack = append(stack, node)
+	}
+
+	// Create all people in Firestore
+	ctx := context.Background()
+	now := time.Now()
+	batch := h.client.Batch()
+	createdPeople := make([]models.Person, 0, len(nodes))
+
+	for _, node := range nodes {
+		person := models.Person{
+			ID:        node.ID,
+			Name:      node.Name,
+			Role:      "Family Member",
+			Birth:     "",
+			Avatar:    generateDefaultAvatar(node.Name),
+			Children:  node.Children,
+			CreatedBy: userID.(string),
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		ref := h.client.Collection("people").Doc(node.ID)
+		batch.Set(ref, person)
+		createdPeople = append(createdPeople, person)
+	}
+
+	// Commit all at once
+	if _, err := batch.Commit(ctx); err != nil {
+		log.Printf("[PopulateTree] Batch commit failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create people"})
+		return
+	}
+
+	log.Printf("[PopulateTree] Created %d people from text", len(createdPeople))
+
+	c.JSON(http.StatusCreated, gin.H{
+		"created_count": len(createdPeople),
+		"people":        createdPeople,
 	})
 }

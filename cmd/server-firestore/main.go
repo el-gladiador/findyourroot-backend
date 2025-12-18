@@ -177,6 +177,7 @@ func main() {
 		treeAdmin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
 			treeAdmin.DELETE("/all", treeHandler.DeleteAllPeople)
+			treeAdmin.POST("/populate", treeHandler.PopulateTreeFromText)
 		}
 	}
 
