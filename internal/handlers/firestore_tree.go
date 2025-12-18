@@ -696,6 +696,7 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 	}
 
 	var nodes []PersonNode
+	indentUnit := 0 // Will be set from first indented line
 
 	for _, line := range lines {
 		// Skip empty lines
@@ -703,33 +704,30 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 			continue
 		}
 
-		// Count leading whitespace to determine level
-		originalLen := len(line)
-		trimmedLine := strings.TrimLeft(line, " \t")
-		leadingSpaces := originalLen - len(trimmedLine)
-
-		// Calculate level: tabs count as 4 spaces, or detect space-based indentation
-		level := 0
-		for i := 0; i < len(line) && (line[i] == ' ' || line[i] == '\t'); i++ {
+		// Count leading whitespace
+		spaces := 0
+		for i := 0; i < len(line); i++ {
 			if line[i] == '\t' {
-				level += 4
+				spaces += 4 // Treat tab as 4 spaces
+			} else if line[i] == ' ' {
+				spaces++
 			} else {
-				level++
+				break
 			}
-		}
-		// Normalize to levels (2 or 4 spaces per level)
-		if leadingSpaces > 0 {
-			// Detect indentation style from first indented line
-			if level >= 4 {
-				level = level / 4
-			} else {
-				level = level / 2
-			}
-		} else {
-			level = 0
 		}
 
-		name := strings.TrimSpace(trimmedLine)
+		// Detect indentation unit from first indented line
+		if spaces > 0 && indentUnit == 0 {
+			indentUnit = spaces
+		}
+
+		// Calculate level
+		level := 0
+		if indentUnit > 0 && spaces > 0 {
+			level = spaces / indentUnit
+		}
+
+		name := strings.TrimSpace(line)
 		if name == "" {
 			continue
 		}
@@ -745,6 +743,12 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 	if len(nodes) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid entries found in text"})
 		return
+	}
+
+	// Debug: Log parsed nodes with levels
+	log.Printf("[PopulateTree] Parsed %d nodes, indentUnit=%d", len(nodes), indentUnit)
+	for i, n := range nodes {
+		log.Printf("[PopulateTree] Node %d: name=%q level=%d", i, n.Name, n.Level)
 	}
 
 	// Build parent-child relationships
@@ -763,6 +767,9 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 		if len(stack) > 0 {
 			parent := stack[len(stack)-1]
 			parent.Children = append(parent.Children, node.ID)
+			log.Printf("[PopulateTree] %q (level %d) is child of %q (level %d)", node.Name, node.Level, parent.Name, parent.Level)
+		} else {
+			log.Printf("[PopulateTree] %q (level %d) has no parent (root)", node.Name, node.Level)
 		}
 
 		// Push this node onto the stack
