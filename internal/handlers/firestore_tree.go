@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/mamiri/findyourroot/internal/models"
+	"github.com/mamiri/findyourroot/internal/utils"
 	"google.golang.org/api/iterator"
 )
 
@@ -485,4 +486,82 @@ func (h *FirestoreTreeHandler) UnlikePerson(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Person unliked successfully"})
+}
+
+// CheckDuplicateNameRequest represents a request to check for duplicate names
+type CheckDuplicateNameRequest struct {
+	Name      string  `json:"name" binding:"required"`
+	Threshold float64 `json:"threshold"` // Default 0.8 if not provided
+	UseAI     bool    `json:"use_ai"`    // Whether to use Gemini AI for matching
+}
+
+// CheckDuplicateName checks if a name already exists or is similar to existing names
+func (h *FirestoreTreeHandler) CheckDuplicateName(c *gin.Context) {
+	var req CheckDuplicateNameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Default threshold
+	threshold := req.Threshold
+	if threshold == 0 {
+		threshold = 0.75 // 75% similarity
+	}
+
+	ctx := context.Background()
+
+	// Get all existing names
+	iter := h.client.Collection("people").Documents(ctx)
+	defer iter.Stop()
+
+	existingNames := make(map[string]string) // personID -> name
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch people"})
+			return
+		}
+
+		var person models.Person
+		if err := doc.DataTo(&person); err != nil {
+			continue
+		}
+		existingNames[person.ID] = person.Name
+	}
+
+	// Find similar names using traditional algorithm
+	matches := utils.FindSimilarNames(req.Name, existingNames, threshold)
+
+	// Optionally enhance with AI matching (if enabled and API key available)
+	aiUsed := false
+	if req.UseAI {
+		aiMatches, err := utils.CheckNameListWithGemini(req.Name, existingNames)
+		if err != nil {
+			log.Printf("Gemini AI matching failed (falling back to traditional): %v", err)
+		} else if len(aiMatches) > 0 {
+			aiUsed = true
+			// Merge AI results with traditional results, avoiding duplicates
+			existingIDs := make(map[string]bool)
+			for _, m := range matches {
+				existingIDs[m.PersonID] = true
+			}
+			for _, aiMatch := range aiMatches {
+				if !existingIDs[aiMatch.PersonID] {
+					matches = append(matches, aiMatch)
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"has_duplicates": len(matches) > 0,
+		"matches":        matches,
+		"input_name":     req.Name,
+		"normalized":     utils.NormalizePersianNameKeepSpaces(req.Name),
+		"ai_enhanced":    aiUsed,
+	})
 }

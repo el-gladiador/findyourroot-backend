@@ -142,6 +142,7 @@ func main() {
 			treePublic.GET("/:id", treeHandler.GetPerson)
 			treePublic.POST("/:id/like", treeHandler.LikePerson)
 			treePublic.DELETE("/:id/like", treeHandler.UnlikePerson)
+			treePublic.POST("/check-duplicate", treeHandler.CheckDuplicateName)
 		}
 
 		// Search routes (authenticated users can search)
