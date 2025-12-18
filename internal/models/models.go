@@ -111,22 +111,25 @@ type IdentityClaimRequest struct {
 
 // Person represents a family tree member
 type Person struct {
-	ID                 string    `json:"id" firestore:"id"`
-	Name               string    `json:"name" firestore:"name"`
-	Role               string    `json:"role" firestore:"role"`
-	Birth              string    `json:"birth" firestore:"birth"`
-	Location           string    `json:"location" firestore:"location"` // Legacy, optional
-	Avatar             string    `json:"avatar" firestore:"avatar"`
-	Bio                string    `json:"bio" firestore:"bio"` // Legacy, optional
-	Children           []string  `json:"children" firestore:"children"`
-	CreatedBy          string    `json:"created_by" firestore:"created_by"`                     // User ID of creator
-	LinkedUserID       string    `json:"linked_user_id" firestore:"linked_user_id"`             // User ID if someone claimed this identity
-	InstagramUsername  string    `json:"instagram_username" firestore:"instagram_username"`     // Instagram handle
-	InstagramAvatarURL string    `json:"instagram_avatar_url" firestore:"instagram_avatar_url"` // Cached Instagram profile picture URL
-	LikesCount         int       `json:"likes_count" firestore:"likes_count"`                   // Number of likes
-	LikedBy            []string  `json:"liked_by" firestore:"liked_by"`                         // User IDs who liked
-	CreatedAt          time.Time `json:"created_at" firestore:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at" firestore:"updated_at"`
+	ID                  string    `json:"id" firestore:"id"`
+	Name                string    `json:"name" firestore:"name"`
+	Role                string    `json:"role" firestore:"role"`
+	Birth               string    `json:"birth" firestore:"birth"`
+	Location            string    `json:"location" firestore:"location"` // Legacy, optional
+	Avatar              string    `json:"avatar" firestore:"avatar"`
+	Bio                 string    `json:"bio" firestore:"bio"` // Legacy, optional
+	Children            []string  `json:"children" firestore:"children"`
+	CreatedBy           string    `json:"created_by" firestore:"created_by"`                       // User ID of creator
+	LinkedUserID        string    `json:"linked_user_id" firestore:"linked_user_id"`               // User ID if someone claimed this identity
+	InstagramUsername   string    `json:"instagram_username" firestore:"instagram_username"`       // Instagram handle
+	InstagramAvatarURL  string    `json:"instagram_avatar_url" firestore:"instagram_avatar_url"`   // Cached Instagram profile picture URL
+	InstagramFullName   string    `json:"instagram_full_name" firestore:"instagram_full_name"`     // Instagram full name
+	InstagramBio        string    `json:"instagram_bio" firestore:"instagram_bio"`                 // Instagram bio
+	InstagramIsVerified bool      `json:"instagram_is_verified" firestore:"instagram_is_verified"` // Instagram verified status
+	LikesCount          int       `json:"likes_count" firestore:"likes_count"`                     // Number of likes
+	LikedBy             []string  `json:"liked_by" firestore:"liked_by"`                           // User IDs who liked
+	CreatedAt           time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at" firestore:"updated_at"`
 }
 
 // RegisterRequest represents registration data

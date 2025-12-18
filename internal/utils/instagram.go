@@ -47,29 +47,27 @@ func FetchInstagramProfile(username string) (*InstagramProfile, error) {
 		}
 	}
 
-	// Always use proxy URL for avatar to ensure it doesn't expire
-	if profile != nil {
-		profile.AvatarURL = GetInstagramAvatarProxy(username)
-	}
-
 	return profile, nil
 }
 
 // GetInstagramAvatarProxy returns a proxy URL that fetches Instagram profile pictures
-// This is more reliable than direct Instagram URLs which expire
+// Tries multiple proxy services for reliability
 func GetInstagramAvatarProxy(username string) string {
-	// Use instadp.io which provides a redirect to the actual profile picture
-	// Alternative services: scontent proxy, or self-hosted solution
+	// Use dicebear as a fallback avatar generator based on username
+	// This creates a unique, consistent avatar for each username
+	// It won't show the real Instagram photo but provides a nice visual identity
+	return fmt.Sprintf("https://api.dicebear.com/7.x/initials/svg?seed=%s&backgroundColor=random", username)
+}
 
-	// Option 1: Use a reliable CDN/proxy service
-	// Note: These services may have rate limits or require API keys for production use
-
-	// For now, use a simple approach - direct Instagram profile URL pattern
-	// Instagram profile pics are at a predictable URL through their CDN
-	// But these URLs change, so we use a proxy service
-
-	// Use unavatar.io which is a free service that fetches social media avatars
-	return fmt.Sprintf("https://unavatar.io/instagram/%s?fallback=false", username)
+// GetInstagramAvatarProxyAlternatives returns multiple proxy URLs to try
+// These can be tried in order on the frontend if one fails
+func GetInstagramAvatarProxyAlternatives(username string) []string {
+	return []string{
+		// Primary: unavatar.io (may be rate limited)
+		fmt.Sprintf("https://unavatar.io/instagram/%s", username),
+		// Alternative: dicebear initials (always works, generates unique avatar)
+		fmt.Sprintf("https://api.dicebear.com/7.x/initials/svg?seed=%s&backgroundColor=random", username),
+	}
 }
 
 // fetchViaWebScraping extracts profile data from the Instagram web page
@@ -134,8 +132,14 @@ func fetchViaWebScraping(username string) (*InstagramProfile, error) {
 		profile.Bio = matches[1]
 	}
 
-	// Use proxy URL for avatar (more reliable than scraped URLs which expire)
-	profile.AvatarURL = GetInstagramAvatarProxy(username)
+	// Try to extract profile picture from og:image
+	imgRegex := regexp.MustCompile(`<meta property="og:image" content="([^"]+)"`)
+	if matches := imgRegex.FindStringSubmatch(html); len(matches) > 1 {
+		profile.AvatarURL = matches[1]
+	} else {
+		// Fallback to proxy URL
+		profile.AvatarURL = GetInstagramAvatarProxy(username)
+	}
 
 	return profile, nil
 }
@@ -195,11 +199,19 @@ func fetchViaIEndpoint(username string) (*InstagramProfile, error) {
 		return nil, fmt.Errorf("user not found")
 	}
 
-	// Use proxy URL for avatar (more reliable than Instagram's expiring URLs)
+	// Use HD profile pic if available, otherwise regular, otherwise fallback to proxy
+	avatarURL := result.Data.User.ProfilePicURLHD
+	if avatarURL == "" {
+		avatarURL = result.Data.User.ProfilePicURL
+	}
+	if avatarURL == "" {
+		avatarURL = GetInstagramAvatarProxy(result.Data.User.Username)
+	}
+
 	return &InstagramProfile{
 		Username:   result.Data.User.Username,
 		FullName:   result.Data.User.FullName,
-		AvatarURL:  GetInstagramAvatarProxy(result.Data.User.Username),
+		AvatarURL:  avatarURL,
 		Bio:        result.Data.User.Biography,
 		IsVerified: result.Data.User.IsVerified,
 	}, nil

@@ -444,15 +444,15 @@ func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
 
 	now := time.Now()
 
-	// If Instagram username provided, try to fetch the profile picture
+	// If Instagram username provided, try to fetch the profile
 	instagramUsername := strings.TrimPrefix(req.InstagramUsername, "@")
-	var instagramAvatarURL string
+	var instagramProfile *utils.InstagramProfile
 	if instagramUsername != "" {
 		profile, err := utils.FetchInstagramProfile(instagramUsername)
 		if err == nil && profile != nil {
-			instagramAvatarURL = profile.AvatarURL
+			instagramProfile = profile
 		}
-		// Don't fail if Instagram fetch fails - just continue without avatar
+		// Don't fail if Instagram fetch fails - just continue without profile
 	}
 
 	// Use transaction to link both user and person
@@ -475,8 +475,17 @@ func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
 		if instagramUsername != "" {
 			updates = append(updates, firestore.Update{Path: "instagram_username", Value: instagramUsername})
 		}
-		if instagramAvatarURL != "" {
-			updates = append(updates, firestore.Update{Path: "instagram_avatar_url", Value: instagramAvatarURL})
+		if instagramProfile != nil {
+			if instagramProfile.AvatarURL != "" {
+				updates = append(updates, firestore.Update{Path: "instagram_avatar_url", Value: instagramProfile.AvatarURL})
+			}
+			if instagramProfile.FullName != "" {
+				updates = append(updates, firestore.Update{Path: "instagram_full_name", Value: instagramProfile.FullName})
+			}
+			if instagramProfile.Bio != "" {
+				updates = append(updates, firestore.Update{Path: "instagram_bio", Value: instagramProfile.Bio})
+			}
+			updates = append(updates, firestore.Update{Path: "instagram_is_verified", Value: instagramProfile.IsVerified})
 		}
 		if err := tx.Update(personRef, updates); err != nil {
 			return err
@@ -573,10 +582,11 @@ func (h *FirestoreIdentityClaimHandler) LookupInstagramProfile(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"username":    profile.Username,
-		"full_name":   profile.FullName,
-		"avatar_url":  profile.AvatarURL,
-		"bio":         profile.Bio,
-		"is_verified": profile.IsVerified,
+		"username":            profile.Username,
+		"full_name":           profile.FullName,
+		"avatar_url":          profile.AvatarURL,
+		"avatar_url_fallback": utils.GetInstagramAvatarProxyAlternatives(username),
+		"bio":                 profile.Bio,
+		"is_verified":         profile.IsVerified,
 	})
 }
