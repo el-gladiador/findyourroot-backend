@@ -37,20 +37,12 @@ func (h *FirestoreIdentityClaimHandler) ClaimIdentity(c *gin.Context) {
 	userEmail, _ := c.Get("email")
 	ctx := context.Background()
 
-	// Check if user already has a linked person
-	userDoc, err := h.client.Collection("users").Doc(userID.(string)).Get(ctx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
-		return
-	}
-
-	var user models.User
-	if err := userDoc.DataTo(&user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user data"})
-		return
-	}
-
-	if user.PersonID != "" {
+	// Check if user already has a linked person (Person owns this relationship)
+	// Query the Person collection to find if any person links to this user
+	existingLinkIter := h.client.Collection("people").Where("linked_user_id", "==", userID.(string)).Limit(1).Documents(ctx)
+	existingLinkDoc, err := existingLinkIter.Next()
+	existingLinkIter.Stop()
+	if err == nil && existingLinkDoc != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "You are already linked to a person in the tree"})
 		return
 	}
@@ -120,31 +112,20 @@ func (h *FirestoreIdentityClaimHandler) GetMyIdentityClaim(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	ctx := context.Background()
 
-	// Get user to check if already linked
-	userDoc, err := h.client.Collection("users").Doc(userID.(string)).Get(ctx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
-		return
-	}
-
-	var user models.User
-	if err := userDoc.DataTo(&user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user data"})
-		return
-	}
-
-	// If user is already linked, return that info
-	if user.PersonID != "" {
-		personDoc, err := h.client.Collection("people").Doc(user.PersonID).Get(ctx)
-		if err == nil {
-			var person models.Person
-			if err := personDoc.DataTo(&person); err == nil {
-				c.JSON(http.StatusOK, gin.H{
-					"linked": true,
-					"person": person,
-				})
-				return
-			}
+	// Check if user is already linked (Person owns this relationship)
+	// Query the Person collection to find if any person links to this user
+	linkedPersonIter := h.client.Collection("people").Where("linked_user_id", "==", userID.(string)).Limit(1).Documents(ctx)
+	linkedPersonDoc, err := linkedPersonIter.Next()
+	linkedPersonIter.Stop()
+	if err == nil && linkedPersonDoc != nil {
+		var person models.Person
+		if err := linkedPersonDoc.DataTo(&person); err == nil {
+			person.ID = linkedPersonDoc.Ref.ID
+			c.JSON(http.StatusOK, gin.H{
+				"linked": true,
+				"person": person,
+			})
+			return
 		}
 	}
 
@@ -268,7 +249,8 @@ func (h *FirestoreIdentityClaimHandler) ReviewIdentityClaim(c *gin.Context) {
 		newStatus = "approved"
 	}
 
-	// Use a transaction to update claim, user, and person atomically
+	// Use a transaction to update claim and person atomically
+	// NOTE: Person owns the link (Person.LinkedUserID), User does NOT store person_id
 	err = h.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		// Update the claim
 		claimRef := h.client.Collection("identity_claims").Doc(claimID)
@@ -282,17 +264,16 @@ func (h *FirestoreIdentityClaimHandler) ReviewIdentityClaim(c *gin.Context) {
 		}
 
 		if req.Approved {
-			// Link the user to the person
+			// Update user verification status (but NOT person_id - Person owns that)
 			userRef := h.client.Collection("users").Doc(claim.UserID)
 			if err := tx.Update(userRef, []firestore.Update{
-				{Path: "person_id", Value: claim.PersonID},
 				{Path: "is_verified", Value: true},
 				{Path: "updated_at", Value: now},
 			}); err != nil {
 				return err
 			}
 
-			// Link the person to the user
+			// Link the person to the user - Person is the OWNER of this relationship
 			personRef := h.client.Collection("people").Doc(claim.PersonID)
 			if err := tx.Update(personRef, []firestore.Update{
 				{Path: "linked_user_id", Value: claim.UserID},
@@ -319,52 +300,31 @@ func (h *FirestoreIdentityClaimHandler) ReviewIdentityClaim(c *gin.Context) {
 }
 
 // UnlinkIdentity allows admin to unlink a user from a tree node
+// Person is the OWNER of the link, so we find the person that links to this user and clear it
 func (h *FirestoreIdentityClaimHandler) UnlinkIdentity(c *gin.Context) {
 	userID := c.Param("user_id")
 	ctx := context.Background()
 
-	// Get user
-	userDoc, err := h.client.Collection("users").Doc(userID).Get(ctx)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
-		return
-	}
+	// Find the person that links to this user (Person owns the relationship)
+	iter := h.client.Collection("people").Where("linked_user_id", "==", userID).Limit(1).Documents(ctx)
+	personDoc, err := iter.Next()
+	iter.Stop()
 
-	var user models.User
-	if err := userDoc.DataTo(&user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user data"})
-		return
-	}
-
-	if user.PersonID == "" {
+	if err == iterator.Done {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "User is not linked to any person"})
 		return
 	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find linked person"})
+		return
+	}
 
-	personID := user.PersonID
 	now := time.Now()
 
-	// Use transaction to unlink both user and person
-	err = h.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		// Unlink user
-		userRef := h.client.Collection("users").Doc(userID)
-		if err := tx.Update(userRef, []firestore.Update{
-			{Path: "person_id", Value: ""},
-			{Path: "updated_at", Value: now},
-		}); err != nil {
-			return err
-		}
-
-		// Unlink person
-		personRef := h.client.Collection("people").Doc(personID)
-		if err := tx.Update(personRef, []firestore.Update{
-			{Path: "linked_user_id", Value: ""},
-			{Path: "updated_at", Value: now},
-		}); err != nil {
-			return err
-		}
-
-		return nil
+	// Only update Person - Person is the single source of truth for the link
+	_, err = h.client.Collection("people").Doc(personDoc.Ref.ID).Update(ctx, []firestore.Update{
+		{Path: "linked_user_id", Value: ""},
+		{Path: "updated_at", Value: now},
 	})
 
 	if err != nil {
@@ -406,20 +366,23 @@ func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
 
 	ctx := context.Background()
 
-	// Get user
+	// Verify user exists
 	userDoc, err := h.client.Collection("users").Doc(req.UserID).Get(ctx)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
-
-	var user models.User
-	if err := userDoc.DataTo(&user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user data"})
+	if !userDoc.Exists() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 
-	if user.PersonID != "" {
+	// Check if user is already linked (Person owns this relationship)
+	// Query the Person collection to find if any person links to this user
+	existingLinkIter := h.client.Collection("people").Where("linked_user_id", "==", req.UserID).Limit(1).Documents(ctx)
+	existingLinkDoc, err := existingLinkIter.Next()
+	existingLinkIter.Stop()
+	if err == nil && existingLinkDoc != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "User is already linked to a person"})
 		return
 	}
@@ -455,44 +418,29 @@ func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
 		// Don't fail if Instagram fetch fails - just continue without profile
 	}
 
-	// Use transaction to link both user and person
-	err = h.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		// Update user
-		userRef := h.client.Collection("users").Doc(req.UserID)
-		if err := tx.Update(userRef, []firestore.Update{
-			{Path: "person_id", Value: req.PersonID},
-			{Path: "updated_at", Value: now},
-		}); err != nil {
-			return err
+	// Person is the OWNER of the link relationship
+	// Only update Person.linked_user_id - User does NOT store person_id
+	personRef := h.client.Collection("people").Doc(req.PersonID)
+	updates := []firestore.Update{
+		{Path: "linked_user_id", Value: req.UserID},
+		{Path: "updated_at", Value: now},
+	}
+	if instagramUsername != "" {
+		updates = append(updates, firestore.Update{Path: "instagram_username", Value: instagramUsername})
+	}
+	if instagramProfile != nil {
+		if instagramProfile.AvatarURL != "" {
+			updates = append(updates, firestore.Update{Path: "instagram_avatar_url", Value: instagramProfile.AvatarURL})
 		}
-
-		// Update person
-		personRef := h.client.Collection("people").Doc(req.PersonID)
-		updates := []firestore.Update{
-			{Path: "linked_user_id", Value: req.UserID},
-			{Path: "updated_at", Value: now},
+		if instagramProfile.FullName != "" {
+			updates = append(updates, firestore.Update{Path: "instagram_full_name", Value: instagramProfile.FullName})
 		}
-		if instagramUsername != "" {
-			updates = append(updates, firestore.Update{Path: "instagram_username", Value: instagramUsername})
+		if instagramProfile.Bio != "" {
+			updates = append(updates, firestore.Update{Path: "instagram_bio", Value: instagramProfile.Bio})
 		}
-		if instagramProfile != nil {
-			if instagramProfile.AvatarURL != "" {
-				updates = append(updates, firestore.Update{Path: "instagram_avatar_url", Value: instagramProfile.AvatarURL})
-			}
-			if instagramProfile.FullName != "" {
-				updates = append(updates, firestore.Update{Path: "instagram_full_name", Value: instagramProfile.FullName})
-			}
-			if instagramProfile.Bio != "" {
-				updates = append(updates, firestore.Update{Path: "instagram_bio", Value: instagramProfile.Bio})
-			}
-			updates = append(updates, firestore.Update{Path: "instagram_is_verified", Value: instagramProfile.IsVerified})
-		}
-		if err := tx.Update(personRef, updates); err != nil {
-			return err
-		}
-
-		return nil
-	})
+		updates = append(updates, firestore.Update{Path: "instagram_is_verified", Value: instagramProfile.IsVerified})
+	}
+	_, err = personRef.Update(ctx, updates)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to link user to person"})

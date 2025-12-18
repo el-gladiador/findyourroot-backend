@@ -68,18 +68,19 @@ type PersonData struct {
 
 // User represents a user in the system
 type User struct {
-	ID           string    `json:"id" firestore:"id"`
-	Email        string    `json:"email" firestore:"email"`
-	PasswordHash string    `json:"-" firestore:"password_hash"`
-	Role         UserRole  `json:"role" firestore:"role"`
-	IsAdmin      bool      `json:"is_admin" firestore:"is_admin"`       // Deprecated, use Role instead
-	TreeName     string    `json:"tree_name" firestore:"tree_name"`     // Family tree name (e.g., "Batur")
-	FatherName   string    `json:"father_name" firestore:"father_name"` // Father's name for verification
-	BirthYear    string    `json:"birth_year" firestore:"birth_year"`   // Birth year for verification
-	IsVerified   bool      `json:"is_verified" firestore:"is_verified"` // Whether user is verified as part of the tree
-	PersonID     string    `json:"person_id" firestore:"person_id"`     // Linked tree node ID (if user claimed identity)
-	CreatedAt    time.Time `json:"created_at" firestore:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" firestore:"updated_at"`
+	ID           string   `json:"id" firestore:"id"`
+	Email        string   `json:"email" firestore:"email"`
+	PasswordHash string   `json:"-" firestore:"password_hash"`
+	Role         UserRole `json:"role" firestore:"role"`
+	IsAdmin      bool     `json:"is_admin" firestore:"is_admin"`       // Deprecated, use Role instead
+	TreeName     string   `json:"tree_name" firestore:"tree_name"`     // Family tree name (e.g., "Batur")
+	FatherName   string   `json:"father_name" firestore:"father_name"` // Father's name for verification
+	BirthYear    string   `json:"birth_year" firestore:"birth_year"`   // Birth year for verification
+	IsVerified   bool     `json:"is_verified" firestore:"is_verified"` // Whether user is verified as part of the tree
+	// REMOVED: PersonID - the link is now owned by Person.LinkedUserID only
+	// To find a user's linked person, query: people WHERE linked_user_id == user.id
+	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" firestore:"updated_at"`
 }
 
 // PermissionRequest represents a request for elevated permissions
@@ -252,13 +253,15 @@ type UpdateUserRoleRequest struct {
 }
 
 // UserListResponse represents a user in the admin user list
+// PersonID is derived from Person.LinkedUserID (Person owns the relationship)
 type UserListResponse struct {
 	ID         string   `json:"id"`
 	Email      string   `json:"email"`
 	Role       UserRole `json:"role"`
 	TreeName   string   `json:"tree_name"`
 	IsVerified bool     `json:"is_verified"`
-	PersonID   string   `json:"person_id"`
+	PersonID   string   `json:"person_id"`   // Derived: person where linked_user_id == this user
+	PersonName string   `json:"person_name"` // Name of linked person for display
 	CreatedAt  string   `json:"created_at"`
 }
 

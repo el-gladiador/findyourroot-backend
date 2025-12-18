@@ -32,6 +32,7 @@ func generateDefaultAvatar(name string) string {
 }
 
 // GetAllPeople returns all people in the tree
+// Also validates references and cleans up any dangling ones
 func (h *FirestoreTreeHandler) GetAllPeople(c *gin.Context) {
 	ctx := context.Background()
 
@@ -39,6 +40,10 @@ func (h *FirestoreTreeHandler) GetAllPeople(c *gin.Context) {
 	defer iter.Stop()
 
 	var people []models.Person
+	var allPersonIDs = make(map[string]bool)
+	var allUserIDs = make(map[string]bool)
+
+	// First pass: collect all people and build ID sets
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -54,6 +59,73 @@ func (h *FirestoreTreeHandler) GetAllPeople(c *gin.Context) {
 			continue
 		}
 		people = append(people, person)
+		allPersonIDs[person.ID] = true
+	}
+
+	// Fetch all valid user IDs for liked_by and linked_user_id validation
+	usersIter := h.client.Collection("users").Documents(ctx)
+	for {
+		doc, err := usersIter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			break // Non-critical, continue without user validation
+		}
+		allUserIDs[doc.Ref.ID] = true
+	}
+	usersIter.Stop()
+
+	// Second pass: validate references and clean up in background
+	integrityService := NewReferentialIntegrityService(h.client)
+	for i := range people {
+		person := &people[i]
+		needsCleanup := false
+
+		// Check children references
+		validChildren := make([]string, 0)
+		for _, childID := range person.Children {
+			if allPersonIDs[childID] {
+				validChildren = append(validChildren, childID)
+			} else {
+				needsCleanup = true
+				log.Printf("[GetAllPeople] Found dangling child reference %s in person %s", childID, person.ID)
+			}
+		}
+		if needsCleanup {
+			person.Children = validChildren
+		}
+
+		// Check liked_by references
+		validLikedBy := make([]string, 0)
+		likedByChanged := false
+		for _, userID := range person.LikedBy {
+			if allUserIDs[userID] {
+				validLikedBy = append(validLikedBy, userID)
+			} else {
+				likedByChanged = true
+				log.Printf("[GetAllPeople] Found dangling liked_by reference %s in person %s", userID, person.ID)
+			}
+		}
+		if likedByChanged {
+			person.LikedBy = validLikedBy
+			person.LikesCount = len(validLikedBy)
+			needsCleanup = true
+		}
+
+		// Check linked_user_id
+		if person.LinkedUserID != "" && !allUserIDs[person.LinkedUserID] {
+			log.Printf("[GetAllPeople] Found dangling linked_user_id %s in person %s", person.LinkedUserID, person.ID)
+			person.LinkedUserID = ""
+			needsCleanup = true
+		}
+
+		// Clean up in background if needed
+		if needsCleanup {
+			go func(personID string) {
+				integrityService.ValidatePersonReferences(context.Background(), personID)
+			}(person.ID)
+		}
 	}
 
 	if people == nil {
@@ -285,40 +357,11 @@ func (h *FirestoreTreeHandler) DeletePerson(c *gin.Context) {
 		return
 	}
 
-	// First, remove this person from any parent's children array using ArrayRemove (atomic)
-	iter := h.client.Collection("people").Where("children", "array-contains", id).Documents(ctx)
-	defer iter.Stop()
-
-	// Collect all parents that need updating
-	var parentRefs []*firestore.DocumentRef
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find parent relationships"})
-			return
-		}
-		parentRefs = append(parentRefs, doc.Ref)
-	}
-
-	// Use batch write to update all parents atomically
-	if len(parentRefs) > 0 {
-		batch := h.client.Batch()
-		for _, parentRef := range parentRefs {
-			batch.Update(parentRef, []firestore.Update{
-				{Path: "children", Value: firestore.ArrayRemove(id)},
-				{Path: "updated_at", Value: time.Now()},
-			})
-		}
-
-		// Commit the batch
-		_, err := batch.Commit(ctx)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cleanup parent relationships"})
-			return
-		}
+	// Use ReferentialIntegrityService to clean up all references BEFORE deleting
+	integrityService := NewReferentialIntegrityService(h.client)
+	if err := integrityService.OnPersonDeleted(ctx, id); err != nil {
+		log.Printf("[DeletePerson] Warning: Integrity cleanup had issues: %v", err)
+		// Continue with deletion anyway - cleanup is best-effort
 	}
 
 	// Now delete the person

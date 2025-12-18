@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -80,6 +81,7 @@ func (h *FirestoreAuthHandler) Login(c *gin.Context) {
 }
 
 // ValidateToken validates a JWT token and returns user info
+// PersonID is derived from Person.LinkedUserID - Person owns the relationship
 func (h *FirestoreAuthHandler) ValidateToken(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -104,6 +106,21 @@ func (h *FirestoreAuthHandler) ValidateToken(c *gin.Context) {
 
 	user.ID = doc.Ref.ID
 
+	// Derive person_id from Person collection (Person owns the relationship)
+	// Query: find person where linked_user_id == this user's ID
+	var personID string
+	var personName string
+	personIter := h.client.Collection("people").Where("linked_user_id", "==", user.ID).Limit(1).Documents(ctx)
+	personDoc, err := personIter.Next()
+	if err == nil {
+		var person models.Person
+		if err := personDoc.DataTo(&person); err == nil {
+			personID = person.ID
+			personName = person.Name
+		}
+	}
+	personIter.Stop()
+
 	c.JSON(http.StatusOK, gin.H{
 		"valid": true,
 		"user": gin.H{
@@ -113,6 +130,8 @@ func (h *FirestoreAuthHandler) ValidateToken(c *gin.Context) {
 			"is_admin":    user.Role == models.RoleAdmin,
 			"tree_name":   user.TreeName,
 			"is_verified": user.IsVerified,
+			"person_id":   personID,   // Derived from Person.LinkedUserID
+			"person_name": personName, // For display
 		},
 	})
 }
@@ -506,8 +525,40 @@ func (h *FirestoreAuthHandler) RejectPermissionRequest(c *gin.Context) {
 }
 
 // GetAllUsers returns all users (admin only)
+// PersonID is derived from Person.LinkedUserID - Person owns the relationship
 func (h *FirestoreAuthHandler) GetAllUsers(c *gin.Context) {
 	ctx := context.Background()
+
+	// Build a map of userID -> (personID, personName) from the Person collection
+	// Person is the OWNER of the link relationship
+	userToPersonMap := make(map[string]struct {
+		PersonID   string
+		PersonName string
+	})
+
+	peopleIter := h.client.Collection("people").Documents(ctx)
+	for {
+		doc, err := peopleIter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Printf("[GetAllUsers] Warning: Failed to fetch people: %v", err)
+			break
+		}
+		var person models.Person
+		if err := doc.DataTo(&person); err != nil {
+			continue
+		}
+		// If this person has a linked user, record it
+		if person.LinkedUserID != "" {
+			userToPersonMap[person.LinkedUserID] = struct {
+				PersonID   string
+				PersonName string
+			}{PersonID: person.ID, PersonName: person.Name}
+		}
+	}
+	peopleIter.Stop()
 
 	iter := h.client.Collection("users").Documents(ctx)
 	defer iter.Stop()
@@ -528,13 +579,17 @@ func (h *FirestoreAuthHandler) GetAllUsers(c *gin.Context) {
 			continue
 		}
 
+		// Derive person link from Person collection (single source of truth)
+		personLink := userToPersonMap[doc.Ref.ID]
+
 		users = append(users, models.UserListResponse{
 			ID:         doc.Ref.ID,
 			Email:      user.Email,
 			Role:       user.Role,
 			TreeName:   user.TreeName,
 			IsVerified: user.IsVerified,
-			PersonID:   user.PersonID,
+			PersonID:   personLink.PersonID,   // Derived from Person.LinkedUserID
+			PersonName: personLink.PersonName, // For display
 			CreatedAt:  user.CreatedAt.Format(time.RFC3339),
 		})
 	}
