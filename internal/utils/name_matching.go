@@ -20,6 +20,26 @@ var persianCharMap = map[rune]rune{
 	'ى': 'ی', // Arabic alef maksura to ya
 }
 
+// PersianPhoneticMap maps similar-sounding Persian letters to a canonical form
+// This handles common spelling mistakes where people confuse similar-sounding letters
+var persianPhoneticMap = map[rune]rune{
+	// ذ/ز/ض/ظ group - all sound like 'z' in colloquial Persian
+	'ذ': 'ز',
+	'ض': 'ز',
+	'ظ': 'ز',
+	// ث/س/ص group - all sound like 's' in colloquial Persian
+	'ث': 'س',
+	'ص': 'س',
+	// ط/ت group - both sound like 't'
+	'ط': 'ت',
+	// ق/غ group - often confused in some dialects
+	'غ': 'ق',
+	// ح/ه group - often confused
+	'ح': 'ه',
+	// ع/ا group - ain often written as alef at word start
+	'ع': 'ا',
+}
+
 // CommonPersianNameVariants maps common name variations
 var commonPersianNameVariants = map[string][]string{
 	"محمد":    {"محمد", "محمّد", "محمدی"},
@@ -60,6 +80,42 @@ func NormalizePersianName(name string) string {
 	}
 
 	return normalized.String()
+}
+
+// PersianPhoneticHash creates a phonetic hash of a Persian name
+// This maps similar-sounding letters to the same character, so:
+// ذکی, زکی, ضکی all become the same hash
+// This catches common spelling mistakes in Persian
+func PersianPhoneticHash(name string) string {
+	// First apply standard normalization
+	name = strings.ToLower(name)
+
+	var hash strings.Builder
+	for _, r := range name {
+		// First apply character normalization (Arabic -> Persian)
+		if mapped, ok := persianCharMap[r]; ok {
+			r = mapped
+		}
+
+		// Skip diacritical marks
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+
+		// Skip spaces
+		if unicode.IsSpace(r) {
+			continue
+		}
+
+		// Apply phonetic mapping (similar sounds -> same letter)
+		if mapped, ok := persianPhoneticMap[r]; ok {
+			hash.WriteRune(mapped)
+		} else {
+			hash.WriteRune(r)
+		}
+	}
+
+	return hash.String()
 }
 
 // NormalizePersianNameKeepSpaces normalizes but keeps spaces (for display)
@@ -158,15 +214,18 @@ type NameMatchResult struct {
 	PersonID   string  `json:"person_id"`
 	Name       string  `json:"name"`
 	Similarity float64 `json:"similarity"`
-	MatchType  string  `json:"match_type"` // "exact", "normalized", "similar", "ai"
+	MatchType  string  `json:"match_type"` // "exact", "normalized", "phonetic", "similar", "ai"
 }
 
 // FindSimilarNames finds names in the list that are similar to the given name
 // Returns matches with similarity >= threshold
+// Uses multiple strategies: exact, normalized, phonetic hash, and Levenshtein distance
 func FindSimilarNames(targetName string, existingNames map[string]string, threshold float64) []NameMatchResult {
 	var results []NameMatchResult
+	seen := make(map[string]bool) // Track already matched person IDs
 
 	normalizedTarget := NormalizePersianName(targetName)
+	phoneticTarget := PersianPhoneticHash(targetName)
 
 	for personID, existingName := range existingNames {
 		// Exact match
@@ -177,10 +236,11 @@ func FindSimilarNames(targetName string, existingNames map[string]string, thresh
 				Similarity: 1.0,
 				MatchType:  "exact",
 			})
+			seen[personID] = true
 			continue
 		}
 
-		// Normalized exact match (handles محمد علی vs محمدعلی)
+		// Normalized exact match (handles محمد علی vs محمدعلی and Arabic/Persian chars)
 		normalizedExisting := NormalizePersianName(existingName)
 		if normalizedTarget == normalizedExisting {
 			results = append(results, NameMatchResult{
@@ -189,12 +249,39 @@ func FindSimilarNames(targetName string, existingNames map[string]string, thresh
 				Similarity: 0.99,
 				MatchType:  "normalized",
 			})
+			seen[personID] = true
 			continue
 		}
 
-		// Fuzzy match using Levenshtein distance
+		// Phonetic match (handles ذکی = زکی = ضکی, etc.)
+		phoneticExisting := PersianPhoneticHash(existingName)
+		if phoneticTarget == phoneticExisting {
+			results = append(results, NameMatchResult{
+				PersonID:   personID,
+				Name:       existingName,
+				Similarity: 0.95,
+				MatchType:  "phonetic",
+			})
+			seen[personID] = true
+			continue
+		}
+
+		// Fuzzy match using Levenshtein distance on phonetic hashes
+		// This catches near-matches even with phonetic variations
+		phoneticSimilarity := calculatePhoneticSimilarity(phoneticTarget, phoneticExisting)
+		if phoneticSimilarity >= threshold && !seen[personID] {
+			results = append(results, NameMatchResult{
+				PersonID:   personID,
+				Name:       existingName,
+				Similarity: phoneticSimilarity,
+				MatchType:  "similar",
+			})
+			continue
+		}
+
+		// Also check standard Levenshtein on normalized names (for non-Persian names)
 		similarity := CalculateNameSimilarity(targetName, existingName)
-		if similarity >= threshold {
+		if similarity >= threshold && !seen[personID] {
 			results = append(results, NameMatchResult{
 				PersonID:   personID,
 				Name:       existingName,
@@ -214,6 +301,22 @@ func FindSimilarNames(targetName string, existingNames map[string]string, thresh
 	}
 
 	return results
+}
+
+// calculatePhoneticSimilarity calculates similarity between two phonetic hashes
+func calculatePhoneticSimilarity(hash1, hash2 string) float64 {
+	if hash1 == hash2 {
+		return 1.0
+	}
+
+	distance := LevenshteinDistance(hash1, hash2)
+	maxLen := max(len([]rune(hash1)), len([]rune(hash2)))
+
+	if maxLen == 0 {
+		return 1.0
+	}
+
+	return 1.0 - float64(distance)/float64(maxLen)
 }
 
 // ContainsPersianCharacters checks if a string contains Persian/Arabic characters

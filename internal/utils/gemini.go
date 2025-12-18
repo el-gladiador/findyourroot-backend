@@ -61,12 +61,19 @@ func CheckNamesWithGemini(name1, name2 string) (*GeminiNameMatchResult, error) {
 Name 1: %s
 Name 2: %s
 
-Consider:
-1. Persian spelling variations (like محمد vs محمّد)
-2. Space variations (محمد علی vs محمدعلی)
-3. Arabic vs Persian character differences (ي vs ی, ك vs ک)
-4. Common nicknames and formal names
-5. Transliteration differences
+Consider these Persian-specific variations:
+1. Similar-sounding letters that are often confused:
+   - ذ/ز/ض (zal/ze/zad) - e.g., ذکی = زکی = ضکی
+   - ث/س/ص (se/sin/sad) - e.g., ثمین = سمین
+   - ط/ت (ta/te) - e.g., طاهر = تاهر
+   - ق/غ (qaf/ghain) - e.g., غلام = قلام
+   - ح/ه (he/ha) - e.g., حسن = هسن (rare but exists)
+   - ع/ا (ain/alef) at start - e.g., علی = الی
+2. Tanvin and tashdid variations (محمد vs محمّد)
+3. Space variations (محمد علی vs محمدعلی)
+4. Arabic vs Persian characters (ي vs ی, ك vs ک, ة vs ه)
+5. Common nicknames and formal equivalents
+6. Transliteration differences from English
 
 Respond ONLY with a JSON object (no markdown, no code blocks):
 {"are_similar": true/false, "confidence": 0.0-1.0, "explanation": "brief explanation in English"}`, name1, name2)
@@ -160,11 +167,20 @@ func CheckNameListWithGemini(targetName string, existingNames map[string]string)
 Here are existing names in the tree:
 %s
 
-Check if the new name could be a duplicate of any existing name. Consider:
-1. Persian spelling variations
-2. Space variations (محمد علی vs محمدعلی)
-3. Arabic vs Persian characters
-4. Common nicknames
+Check if the new name could be a duplicate of any existing name. Consider these Persian-specific variations:
+
+1. Similar-sounding letters that are often confused:
+   - ذ/ز/ض (zal/ze/zad) - e.g., ذکی = زکی = ضکی
+   - ث/س/ص (se/sin/sad) - e.g., ثمین = سمین  
+   - ط/ت (ta/te) - e.g., طاهر = تاهر
+   - ق/غ (qaf/ghain) - e.g., غلام = قلام
+   - ح/ه (he/ha) - e.g., حسن = هسن
+   - ع/ا (ain/alef) at word start - e.g., علی = الی
+2. Tanvin and tashdid variations (محمد vs محمّد)
+3. Space variations (محمد علی vs محمدعلی)
+4. Arabic vs Persian characters (ي vs ی, ك vs ک, ة vs ه)
+5. Common nicknames and formal equivalents (e.g., رضا = غلامرضا)
+6. Transliteration from English variations
 
 Respond ONLY with a JSON array (no markdown, no code blocks). If no matches found, return empty array [].
 Format: [{"person_id": "id", "name": "name", "similarity": 0.0-1.0, "match_type": "ai"}]
