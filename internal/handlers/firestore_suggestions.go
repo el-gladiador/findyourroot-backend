@@ -475,3 +475,309 @@ func (h *FirestoreSuggestionHandler) suggestionToResponse(ctx context.Context, s
 
 	return resp
 }
+
+// GetGroupedSuggestions returns suggestions grouped by similarity with conflict detection
+func (h *FirestoreSuggestionHandler) GetGroupedSuggestions(c *gin.Context) {
+	status := c.DefaultQuery("status", "pending")
+	email, _ := c.Get("email")
+	role, _ := c.Get("role")
+
+	log.Printf("[GetGroupedSuggestions] Request from %s (role: %s), filter status: %s", email, role, status)
+
+	ctx := context.Background()
+
+	iter := h.client.Collection("suggestions").Where("status", "==", status).Documents(ctx)
+	defer iter.Stop()
+
+	var suggestions []models.Suggestion
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Printf("[GetGroupedSuggestions] Error fetching suggestions: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch suggestions"})
+			return
+		}
+
+		var s models.Suggestion
+		if err := doc.DataTo(&s); err != nil {
+			continue
+		}
+		suggestions = append(suggestions, s)
+	}
+
+	// Group similar suggestions
+	groups := h.groupSuggestions(ctx, suggestions)
+
+	// Detect conflicts between groups
+	h.detectConflicts(groups)
+
+	log.Printf("[GetGroupedSuggestions] Grouped %d suggestions into %d groups", len(suggestions), len(groups))
+
+	c.JSON(http.StatusOK, gin.H{
+		"groups":      groups,
+		"total_count": len(suggestions),
+		"group_count": len(groups),
+	})
+}
+
+// groupSuggestions groups similar suggestions together
+func (h *FirestoreSuggestionHandler) groupSuggestions(ctx context.Context, suggestions []models.Suggestion) []models.GroupedSuggestion {
+	// Map to track groups: key is "type:target_person_id:person_data_hash"
+	groupMap := make(map[string]*models.GroupedSuggestion)
+
+	for _, s := range suggestions {
+		key := h.getSuggestionGroupKey(s)
+
+		if existing, ok := groupMap[key]; ok {
+			// Add to existing group
+			existing.SuggestionIDs = append(existing.SuggestionIDs, s.ID)
+			existing.UserEmails = append(existing.UserEmails, s.UserEmail)
+			existing.Count++
+			if s.Message != "" {
+				existing.Messages = append(existing.Messages, s.Message)
+			}
+
+			// Update time range
+			createdAt := s.CreatedAt.Format(time.RFC3339)
+			if createdAt < existing.FirstCreatedAt {
+				existing.FirstCreatedAt = createdAt
+			}
+			if createdAt > existing.LastCreatedAt {
+				existing.LastCreatedAt = createdAt
+			}
+		} else {
+			// Create new group
+			group := &models.GroupedSuggestion{
+				GroupID:        key,
+				Type:           s.Type,
+				TargetPersonID: s.TargetPersonID,
+				PersonData:     s.PersonData,
+				SuggestionIDs:  []string{s.ID},
+				UserEmails:     []string{s.UserEmail},
+				Count:          1,
+				FirstCreatedAt: s.CreatedAt.Format(time.RFC3339),
+				LastCreatedAt:  s.CreatedAt.Format(time.RFC3339),
+				Messages:       []string{},
+				HasConflicts:   false,
+				ConflictsWith:  []string{},
+			}
+			if s.Message != "" {
+				group.Messages = append(group.Messages, s.Message)
+			}
+
+			// Fetch target person info for edit/delete
+			if s.TargetPersonID != "" && (s.Type == models.SuggestionEdit || s.Type == models.SuggestionDelete) {
+				doc, err := h.client.Collection("people").Doc(s.TargetPersonID).Get(ctx)
+				if err == nil {
+					var person models.Person
+					if err := doc.DataTo(&person); err == nil {
+						group.TargetPerson = &person
+					}
+				}
+			}
+
+			groupMap[key] = group
+		}
+	}
+
+	// Convert map to slice and sort by count (highest first)
+	groups := make([]models.GroupedSuggestion, 0, len(groupMap))
+	for _, g := range groupMap {
+		groups = append(groups, *g)
+	}
+
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Count != groups[j].Count {
+			return groups[i].Count > groups[j].Count // More votes first
+		}
+		return groups[i].FirstCreatedAt < groups[j].FirstCreatedAt // Older first
+	})
+
+	return groups
+}
+
+// getSuggestionGroupKey generates a unique key for grouping similar suggestions
+func (h *FirestoreSuggestionHandler) getSuggestionGroupKey(s models.Suggestion) string {
+	switch s.Type {
+	case models.SuggestionDelete:
+		// All delete suggestions for the same person are grouped
+		return fmt.Sprintf("delete:%s", s.TargetPersonID)
+	case models.SuggestionEdit:
+		// Edit suggestions are grouped if they edit the same person with the same values
+		if s.PersonData != nil {
+			return fmt.Sprintf("edit:%s:%s:%s:%s", s.TargetPersonID, s.PersonData.Name, s.PersonData.Role, s.PersonData.Birth)
+		}
+		return fmt.Sprintf("edit:%s", s.TargetPersonID)
+	case models.SuggestionAdd:
+		// Add suggestions are grouped if they add the same person to the same parent
+		if s.PersonData != nil {
+			return fmt.Sprintf("add:%s:%s:%s:%s", s.TargetPersonID, s.PersonData.Name, s.PersonData.Role, s.PersonData.Birth)
+		}
+		return fmt.Sprintf("add:%s", s.TargetPersonID)
+	}
+	return fmt.Sprintf("unknown:%s:%s", s.Type, s.ID)
+}
+
+// detectConflicts finds conflicts between suggestion groups
+func (h *FirestoreSuggestionHandler) detectConflicts(groups []models.GroupedSuggestion) {
+	// Build a map of target_person_id -> groups affecting it
+	personGroups := make(map[string][]*models.GroupedSuggestion)
+	for i := range groups {
+		if groups[i].TargetPersonID != "" {
+			personGroups[groups[i].TargetPersonID] = append(personGroups[groups[i].TargetPersonID], &groups[i])
+		}
+	}
+
+	// Check for conflicts
+	for personID, affectedGroups := range personGroups {
+		if len(affectedGroups) <= 1 {
+			continue // No conflict if only one group affects this person
+		}
+
+		// Check for conflict types
+		hasDelete := false
+		hasEdit := false
+		var deleteGroup, editGroup *models.GroupedSuggestion
+
+		for _, g := range affectedGroups {
+			if g.Type == models.SuggestionDelete {
+				hasDelete = true
+				deleteGroup = g
+			}
+			if g.Type == models.SuggestionEdit {
+				hasEdit = true
+				editGroup = g
+			}
+		}
+
+		// Delete + Edit conflict
+		if hasDelete && hasEdit {
+			deleteGroup.HasConflicts = true
+			deleteGroup.ConflictsWith = append(deleteGroup.ConflictsWith, editGroup.GroupID)
+			deleteGroup.ConflictType = fmt.Sprintf("Conflicts with edit suggestion for person %s", personID)
+
+			editGroup.HasConflicts = true
+			editGroup.ConflictsWith = append(editGroup.ConflictsWith, deleteGroup.GroupID)
+			editGroup.ConflictType = fmt.Sprintf("Conflicts with delete suggestion for person %s", personID)
+		}
+
+		// Multiple different edit suggestions
+		editGroups := make([]*models.GroupedSuggestion, 0)
+		for _, g := range affectedGroups {
+			if g.Type == models.SuggestionEdit {
+				editGroups = append(editGroups, g)
+			}
+		}
+
+		if len(editGroups) > 1 {
+			for i, g1 := range editGroups {
+				for j, g2 := range editGroups {
+					if i != j {
+						g1.HasConflicts = true
+						g1.ConflictsWith = append(g1.ConflictsWith, g2.GroupID)
+						g1.ConflictType = "Multiple different edit suggestions for the same person"
+					}
+				}
+			}
+		}
+	}
+}
+
+// BatchReviewSuggestions reviews multiple suggestions at once
+func (h *FirestoreSuggestionHandler) BatchReviewSuggestions(c *gin.Context) {
+	reviewerID, _ := c.Get("user_id")
+	reviewerEmail, _ := c.Get("email")
+
+	var req models.BatchReviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	if len(req.SuggestionIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No suggestion IDs provided"})
+		return
+	}
+
+	ctx := context.Background()
+	now := time.Now()
+
+	newStatus := "rejected"
+	if req.Approved {
+		newStatus = "approved"
+	}
+
+	successCount := 0
+	failCount := 0
+	var firstError error
+
+	for _, suggestionID := range req.SuggestionIDs {
+		// Get the suggestion
+		doc, err := h.client.Collection("suggestions").Doc(suggestionID).Get(ctx)
+		if err != nil {
+			failCount++
+			if firstError == nil {
+				firstError = err
+			}
+			continue
+		}
+
+		var suggestion models.Suggestion
+		if err := doc.DataTo(&suggestion); err != nil {
+			failCount++
+			continue
+		}
+
+		if suggestion.Status != "pending" {
+			// Already reviewed, skip
+			continue
+		}
+
+		// If approved, execute the suggestion
+		if req.Approved {
+			if err := h.executeSuggestion(ctx, suggestion); err != nil {
+				log.Printf("[BatchReview] Error executing suggestion %s: %v", suggestionID, err)
+				failCount++
+				if firstError == nil {
+					firstError = err
+				}
+				continue
+			}
+		}
+
+		// Update suggestion status
+		_, err = h.client.Collection("suggestions").Doc(suggestionID).Update(ctx, []firestore.Update{
+			{Path: "status", Value: newStatus},
+			{Path: "reviewed_by", Value: reviewerID.(string)},
+			{Path: "reviewer_email", Value: reviewerEmail.(string)},
+			{Path: "review_notes", Value: req.ReviewNotes},
+			{Path: "updated_at", Value: now},
+		})
+		if err != nil {
+			failCount++
+			continue
+		}
+
+		successCount++
+	}
+
+	log.Printf("[BatchReview] Batch review completed: %d success, %d failed", successCount, failCount)
+
+	if failCount > 0 && successCount == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":         "All suggestions failed to review",
+			"success_count": successCount,
+			"fail_count":    failCount,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       fmt.Sprintf("Reviewed %d suggestions", successCount),
+		"success_count": successCount,
+		"fail_count":    failCount,
+	})
+}

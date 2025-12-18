@@ -131,7 +131,9 @@ func main() {
 		suggestionsAdmin.Use(middleware.AuthMiddleware(), middleware.RequireApprover())
 		{
 			suggestionsAdmin.GET("", suggestionHandler.GetAllSuggestions)
+			suggestionsAdmin.GET("/grouped", suggestionHandler.GetGroupedSuggestions)
 			suggestionsAdmin.POST("/:id/review", suggestionHandler.ReviewSuggestion)
+			suggestionsAdmin.POST("/batch-review", suggestionHandler.BatchReviewSuggestions)
 		}
 
 		// Tree routes - split by permission level

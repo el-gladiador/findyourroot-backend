@@ -221,6 +221,31 @@ type ReviewSuggestionRequest struct {
 	ReviewNotes string `json:"review_notes"`
 }
 
+// GroupedSuggestion represents multiple similar suggestions merged together
+type GroupedSuggestion struct {
+	GroupID        string         `json:"group_id"` // Unique identifier for the group
+	Type           SuggestionType `json:"type"`     // add, edit, delete
+	TargetPersonID string         `json:"target_person_id"`
+	TargetPerson   *Person        `json:"target_person,omitempty"`
+	PersonData     *PersonData    `json:"person_data,omitempty"`
+	SuggestionIDs  []string       `json:"suggestion_ids"`   // All suggestion IDs in this group
+	UserEmails     []string       `json:"user_emails"`      // All users who made this suggestion
+	Count          int            `json:"count"`            // Number of people suggesting this
+	FirstCreatedAt string         `json:"first_created_at"` // Earliest suggestion
+	LastCreatedAt  string         `json:"last_created_at"`  // Most recent suggestion
+	Messages       []string       `json:"messages"`         // All messages from users
+	HasConflicts   bool           `json:"has_conflicts"`    // True if conflicts with other suggestions
+	ConflictsWith  []string       `json:"conflicts_with"`   // Group IDs of conflicting suggestions
+	ConflictType   string         `json:"conflict_type"`    // Description of conflict
+}
+
+// BatchReviewRequest represents a request to review multiple suggestions at once
+type BatchReviewRequest struct {
+	SuggestionIDs []string `json:"suggestion_ids" binding:"required"`
+	Approved      bool     `json:"approved"`
+	ReviewNotes   string   `json:"review_notes"`
+}
+
 // UpdateUserRoleRequest represents a request to change a user's role
 type UpdateUserRoleRequest struct {
 	Role UserRole `json:"role" binding:"required"`

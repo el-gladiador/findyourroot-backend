@@ -121,7 +121,7 @@ Respond ONLY with a JSON object (no markdown, no code blocks):
 
 	responseText := geminiResp.Candidates[0].Content.Parts[0].Text
 	responseText = strings.TrimSpace(responseText)
-	
+
 	// Clean up potential markdown code blocks
 	responseText = strings.TrimPrefix(responseText, "```json")
 	responseText = strings.TrimPrefix(responseText, "```")
