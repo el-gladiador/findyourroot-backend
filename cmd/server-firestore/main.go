@@ -80,6 +80,7 @@ func main() {
 		{
 			identity.POST("/claim", identityClaimHandler.ClaimIdentity)
 			identity.GET("/my-claim", identityClaimHandler.GetMyIdentityClaim)
+			identity.PUT("/my-instagram", identityClaimHandler.UpdateMyInstagram) // User updates their own Instagram
 		}
 
 		// Admin routes

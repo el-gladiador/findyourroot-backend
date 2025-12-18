@@ -455,7 +455,7 @@ type UpdatePersonInstagramRequest struct {
 	InstagramUsername string `json:"instagram_username" binding:"required"`
 }
 
-// UpdatePersonInstagram allows admin to update a person's Instagram username
+// UpdatePersonInstagram allows admin OR the linked user to update a person's Instagram username
 func (h *FirestoreIdentityClaimHandler) UpdatePersonInstagram(c *gin.Context) {
 	personID := c.Param("person_id")
 
@@ -465,11 +465,9 @@ func (h *FirestoreIdentityClaimHandler) UpdatePersonInstagram(c *gin.Context) {
 		return
 	}
 
-	adminRole, _ := c.Get("role")
-	if adminRole != string(models.RoleAdmin) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can update Instagram usernames"})
-		return
-	}
+	userID, _ := c.Get("user_id")
+	userRole, _ := c.Get("role")
+	isAdmin := userRole == string(models.RoleAdmin)
 
 	ctx := context.Background()
 
@@ -489,6 +487,13 @@ func (h *FirestoreIdentityClaimHandler) UpdatePersonInstagram(c *gin.Context) {
 	// Person must be linked to a user to have Instagram
 	if person.LinkedUserID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Person must be linked to a user before adding Instagram"})
+		return
+	}
+
+	// Check permission: must be admin OR the person linked to this node
+	isOwner := person.LinkedUserID == userID.(string)
+	if !isAdmin && !isOwner {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only update Instagram for your own linked profile"})
 		return
 	}
 
@@ -536,5 +541,65 @@ func (h *FirestoreIdentityClaimHandler) LookupInstagramProfile(c *gin.Context) {
 		"avatar_url_fallback": utils.GetInstagramAvatarProxyAlternatives(username),
 		"bio":                 profile.Bio,
 		"is_verified":         profile.IsVerified,
+	})
+}
+
+// UpdateMyInstagram allows a user to update their own linked tree node's Instagram
+func (h *FirestoreIdentityClaimHandler) UpdateMyInstagram(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var req UpdatePersonInstagramRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Find the person linked to this user
+	iter := h.client.Collection("people").Where("linked_user_id", "==", userID.(string)).Limit(1).Documents(ctx)
+	doc, err := iter.Next()
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "You don't have a linked tree node. Please claim your identity first."})
+		return
+	}
+
+	var person models.Person
+	if err := doc.DataTo(&person); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse person data"})
+		return
+	}
+
+	// Clean the username (remove @ and URL parts)
+	username := req.InstagramUsername
+	username = strings.TrimPrefix(username, "@")
+	// Handle full URL: https://instagram.com/username or https://www.instagram.com/username/
+	if strings.Contains(username, "instagram.com/") {
+		parts := strings.Split(username, "instagram.com/")
+		if len(parts) > 1 {
+			username = strings.Trim(parts[1], "/")
+			// Remove query params
+			if idx := strings.Index(username, "?"); idx != -1 {
+				username = username[:idx]
+			}
+		}
+	}
+
+	now := time.Now()
+
+	// Update person
+	_, err = h.client.Collection("people").Doc(person.ID).Update(ctx, []firestore.Update{
+		{Path: "instagram_username", Value: username},
+		{Path: "updated_at", Value: now},
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Instagram"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Instagram username updated successfully",
+		"username": username,
 	})
 }

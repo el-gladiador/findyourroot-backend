@@ -32,6 +32,16 @@ func generateDefaultAvatar(name string) string {
 	return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=b6e3f4", encodedName)
 }
 
+// generateGenderAvatar creates a gender-appropriate avatar
+func generateGenderAvatar(name string, gender string) string {
+	encodedName := url.QueryEscape(name)
+	if gender == "female" {
+		return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=ffdfbf&facialHairProbability=0&top=longHair,hat", encodedName)
+	}
+	// Male or unknown defaults to male-style avatar
+	return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=b6e3f4&facialHairProbability=50", encodedName)
+}
+
 // GetAllPeople returns all people in the tree
 // Also validates references and cleans up any dangling ones
 func (h *FirestoreTreeHandler) GetAllPeople(c *gin.Context) {
@@ -690,6 +700,7 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 
 	type PersonNode struct {
 		Name     string
+		Gender   string // "male", "female", or ""
 		Level    int
 		ID       string
 		Children []string
@@ -732,8 +743,19 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 			continue
 		}
 
+		// Parse gender from name: "John (m)" or "Mary (f)" or "Alex (M)" or "Jane (F)"
+		gender := "male" // Default to male
+		if strings.HasSuffix(name, "(m)") || strings.HasSuffix(name, "(M)") {
+			name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(name, "(m)"), "(M)"))
+			gender = "male"
+		} else if strings.HasSuffix(name, "(f)") || strings.HasSuffix(name, "(F)") {
+			name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(name, "(f)"), "(F)"))
+			gender = "female"
+		}
+
 		nodes = append(nodes, PersonNode{
 			Name:     name,
+			Gender:   gender,
 			Level:    level,
 			ID:       uuid.New().String(),
 			Children: []string{},
@@ -788,7 +810,7 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 			Name:      node.Name,
 			Role:      "Family Member",
 			Birth:     "",
-			Avatar:    generateDefaultAvatar(node.Name),
+			Avatar:    generateGenderAvatar(node.Name, node.Gender),
 			Children:  node.Children,
 			CreatedBy: userID.(string),
 			CreatedAt: now,
