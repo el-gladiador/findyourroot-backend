@@ -47,8 +47,8 @@ func (h *FirestoreSuggestionHandler) CreateSuggestion(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "person_data is required for add suggestions"})
 			return
 		}
-		if req.PersonData.Name == "" || req.PersonData.Role == "" || req.PersonData.Birth == "" || req.PersonData.Location == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "name, role, birth, and location are required in person_data"})
+		if req.PersonData.Name == "" || req.PersonData.Role == "" || req.PersonData.Birth == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name, role, and birth are required in person_data"})
 			return
 		}
 	}
