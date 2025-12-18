@@ -391,8 +391,16 @@ func (h *FirestoreIdentityClaimHandler) LinkUserToPerson(c *gin.Context) {
 	}
 
 	adminRole, _ := c.Get("role")
-	if adminRole != string(models.RoleAdmin) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can link users to tree nodes"})
+	adminUserID, _ := c.Get("user_id")
+
+	// Allow admin and co-admin to link users
+	// Co-admins can only link themselves, admins can link anyone
+	isAdmin := adminRole == string(models.RoleAdmin)
+	isCoAdmin := adminRole == string(models.RoleCoAdmin)
+	isSelfLink := adminUserID.(string) == req.UserID
+
+	if !isAdmin && !(isCoAdmin && isSelfLink) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can link other users. Co-admins can only link themselves."})
 		return
 	}
 

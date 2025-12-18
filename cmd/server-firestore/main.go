@@ -197,9 +197,9 @@ func main() {
 				adminIdentity.DELETE("/unlink/:user_id", identityClaimHandler.UnlinkIdentity)
 			}
 
-			// Admin-only routes for linking users to tree nodes
+			// Admin-only routes for linking users to tree nodes (co-admin can self-link)
 			adminLink := v1.Group("/admin")
-			adminLink.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
+			adminLink.Use(middleware.AuthMiddleware(), middleware.RequireApprover()) // Allow co-admin for self-linking
 			{
 				adminLink.POST("/link-user-to-person", identityClaimHandler.LinkUserToPerson)
 				adminLink.PUT("/person/:person_id/instagram", identityClaimHandler.UpdatePersonInstagram)
