@@ -37,7 +37,7 @@ func generateDefaultAvatar(name string) string {
 func generateGenderAvatar(name string, gender string) string {
 	encodedName := url.QueryEscape(name)
 	if gender == "female" {
-		return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=ffdfbf&facialHairProbability=0&top=longHair,hat", encodedName)
+		return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=ffdfbf&facialHairProbability=0&top=bigHair,bob,bun,curly,curvy,dreads,frida,longButNotTooLong,miaWallace,straight01,straight02", encodedName)
 	}
 	// Male or unknown defaults to male-style avatar
 	return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=b6e3f4&facialHairProbability=50", encodedName)
