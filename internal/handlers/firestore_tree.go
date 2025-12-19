@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -188,10 +189,16 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 	// Get user ID from context
 	userID, _ := c.Get("user_id")
 
-	// Generate default avatar if not provided
+	// Generate avatar based on gender if not provided
 	avatar := req.Avatar
 	if avatar == "" {
-		avatar = generateDefaultAvatar(req.Name)
+		avatar = generateGenderAvatar(req.Name, req.Gender)
+	}
+
+	// Normalize gender
+	gender := req.Gender
+	if gender != "male" && gender != "female" {
+		gender = "" // Unknown/unspecified
 	}
 
 	// Use children from request if provided, otherwise empty
@@ -204,6 +211,7 @@ func (h *FirestoreTreeHandler) CreatePerson(c *gin.Context) {
 		ID:        id,
 		Name:      req.Name,
 		Role:      req.Role,
+		Gender:    gender,
 		Birth:     req.Birth,
 		Location:  req.Location,
 		Avatar:    avatar,
@@ -684,6 +692,84 @@ type ParsedPerson struct {
 	Children []string
 }
 
+// parsePersonInfo extracts name, gender, birth year from text
+// Supported formats:
+//   - "John" (defaults to male)
+//   - "Mary (f)" or "Mary (F)" (female)
+//   - "John (m)" or "John (M)" (male)
+//   - "John, 1985" or "John (m), 1985" (with birth year)
+//   - "John (m) b:1985" or "John b:1985" (with birth year)
+//   - "John | 1985" or "John (f) | 1985" (with birth year)
+func parsePersonInfo(text string) (name string, gender string, birth string) {
+	gender = "male" // Default to male
+	name = text
+
+	// First check for gender markers at end
+	if strings.HasSuffix(name, "(m)") || strings.HasSuffix(name, "(M)") {
+		name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(name, "(m)"), "(M)"))
+		gender = "male"
+	} else if strings.HasSuffix(name, "(f)") || strings.HasSuffix(name, "(F)") {
+		name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(name, "(f)"), "(F)"))
+		gender = "female"
+	}
+
+	// Check for gender marker before comma/pipe: "John (m), 1985"
+	if idx := strings.Index(name, " (m)"); idx > 0 {
+		gender = "male"
+		name = strings.TrimSpace(name[:idx]) + name[idx+4:]
+	} else if idx := strings.Index(name, " (M)"); idx > 0 {
+		gender = "male"
+		name = strings.TrimSpace(name[:idx]) + name[idx+4:]
+	} else if idx := strings.Index(name, " (f)"); idx > 0 {
+		gender = "female"
+		name = strings.TrimSpace(name[:idx]) + name[idx+4:]
+	} else if idx := strings.Index(name, " (F)"); idx > 0 {
+		gender = "female"
+		name = strings.TrimSpace(name[:idx]) + name[idx+4:]
+	}
+
+	// Extract birth year from various formats
+	// Format: "name, 1985" or "name | 1985"
+	if parts := strings.Split(name, ","); len(parts) >= 2 {
+		possibleYear := strings.TrimSpace(parts[len(parts)-1])
+		if len(possibleYear) == 4 && isNumeric(possibleYear) {
+			birth = possibleYear
+			name = strings.TrimSpace(strings.Join(parts[:len(parts)-1], ","))
+		}
+	} else if parts := strings.Split(name, "|"); len(parts) >= 2 {
+		possibleYear := strings.TrimSpace(parts[len(parts)-1])
+		if len(possibleYear) == 4 && isNumeric(possibleYear) {
+			birth = possibleYear
+			name = strings.TrimSpace(strings.Join(parts[:len(parts)-1], "|"))
+		}
+	}
+
+	// Format: "name b:1985" or "name B:1985"
+	if idx := strings.Index(strings.ToLower(name), " b:"); idx > 0 {
+		possibleYear := strings.TrimSpace(name[idx+3:])
+		if len(possibleYear) >= 4 {
+			yearPart := possibleYear[:4]
+			if isNumeric(yearPart) {
+				birth = yearPart
+				name = strings.TrimSpace(name[:idx])
+			}
+		}
+	}
+
+	name = strings.TrimSpace(name)
+	return
+}
+
+// isNumeric checks if a string contains only digits
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 // PopulateTreeFromText parses indentation-based text and creates the tree (admin only)
 func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 	var req PopulateTreeRequest
@@ -701,6 +787,8 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 	type PersonNode struct {
 		Name     string
 		Gender   string // "male", "female", or ""
+		Birth    string // Birth year or date
+		Location string // Birthplace or location
 		Level    int
 		ID       string
 		Children []string
@@ -743,19 +831,64 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 			continue
 		}
 
+		// Parse format: "Name (m/f) YYYY l:Location" or "Name (m/f) b:YYYY l:Location"
+		// Examples:
+		//   "John Smith (m) 1985"
+		//   "Jane Doe (f) b:1990 l:New York"
+		//   "Alex Johnson (m) l:Chicago"
+		//   "Mary Williams" - defaults to female if no marker
+
 		// Parse gender from name: "John (m)" or "Mary (f)" or "Alex (M)" or "Jane (F)"
 		gender := "male" // Default to male
-		if strings.HasSuffix(name, "(m)") || strings.HasSuffix(name, "(M)") {
-			name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(name, "(m)"), "(M)"))
+		if strings.Contains(name, "(m)") || strings.Contains(name, "(M)") {
+			name = strings.TrimSpace(strings.Replace(strings.Replace(name, "(m)", "", 1), "(M)", "", 1))
 			gender = "male"
-		} else if strings.HasSuffix(name, "(f)") || strings.HasSuffix(name, "(F)") {
-			name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(name, "(f)"), "(F)"))
+		} else if strings.Contains(name, "(f)") || strings.Contains(name, "(F)") {
+			name = strings.TrimSpace(strings.Replace(strings.Replace(name, "(f)", "", 1), "(F)", "", 1))
 			gender = "female"
 		}
+
+		// Parse location - look for "l:Location" or "loc:Location"
+		location := ""
+		if idx := strings.Index(name, " l:"); idx != -1 {
+			location = strings.TrimSpace(name[idx+3:])
+			name = strings.TrimSpace(name[:idx])
+		} else if idx := strings.Index(name, " loc:"); idx != -1 {
+			location = strings.TrimSpace(name[idx+5:])
+			name = strings.TrimSpace(name[:idx])
+		}
+
+		// Parse birth year - look for "b:YYYY" or standalone 4-digit year
+		birth := ""
+		if idx := strings.Index(name, " b:"); idx != -1 {
+			// Extract birth after "b:"
+			rest := name[idx+3:]
+			// Get just the year part (up to next space or end)
+			endIdx := strings.Index(rest, " ")
+			if endIdx == -1 {
+				birth = strings.TrimSpace(rest)
+				name = strings.TrimSpace(name[:idx])
+			} else {
+				birth = strings.TrimSpace(rest[:endIdx])
+				name = strings.TrimSpace(name[:idx]) + " " + strings.TrimSpace(rest[endIdx:])
+			}
+		} else {
+			// Look for standalone 4-digit year (1900-2099)
+			birthPattern := regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
+			if match := birthPattern.FindString(name); match != "" {
+				birth = match
+				name = strings.TrimSpace(birthPattern.ReplaceAllString(name, ""))
+			}
+		}
+
+		// Clean up any double spaces
+		name = strings.Join(strings.Fields(name), " ")
 
 		nodes = append(nodes, PersonNode{
 			Name:     name,
 			Gender:   gender,
+			Birth:    birth,
+			Location: location,
 			Level:    level,
 			ID:       uuid.New().String(),
 			Children: []string{},
@@ -808,8 +941,10 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 		person := models.Person{
 			ID:        node.ID,
 			Name:      node.Name,
+			Gender:    node.Gender,
 			Role:      "Family Member",
-			Birth:     "",
+			Birth:     node.Birth,
+			Location:  node.Location,
 			Avatar:    generateGenderAvatar(node.Name, node.Gender),
 			Children:  node.Children,
 			CreatedBy: userID.(string),

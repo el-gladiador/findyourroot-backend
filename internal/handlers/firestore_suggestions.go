@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"sort"
 	"time"
 
@@ -306,17 +305,17 @@ func (h *FirestoreSuggestionHandler) executeAdd(ctx context.Context, s models.Su
 	id := uuid.New().String()
 	now := time.Now()
 
-	// Generate default avatar if not provided
+	// Generate gender-aware avatar if not provided
 	avatar := s.PersonData.Avatar
 	if avatar == "" {
-		encodedName := url.QueryEscape(s.PersonData.Name)
-		avatar = fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s&backgroundColor=b6e3f4", encodedName)
+		avatar = generateGenderAvatar(s.PersonData.Name, s.PersonData.Gender)
 	}
 
 	person := models.Person{
 		ID:        id,
 		Name:      s.PersonData.Name,
 		Role:      s.PersonData.Role,
+		Gender:    s.PersonData.Gender,
 		Birth:     s.PersonData.Birth,
 		Location:  s.PersonData.Location,
 		Avatar:    avatar,

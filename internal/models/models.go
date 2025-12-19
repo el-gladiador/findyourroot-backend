@@ -57,6 +57,7 @@ type Suggestion struct {
 type PersonData struct {
 	Name               string `json:"name" firestore:"name"`
 	Role               string `json:"role" firestore:"role"`
+	Gender             string `json:"gender" firestore:"gender"` // "male", "female", or empty
 	Birth              string `json:"birth" firestore:"birth"`
 	Location           string `json:"location" firestore:"location"`
 	Avatar             string `json:"avatar" firestore:"avatar"`
@@ -114,6 +115,7 @@ type Person struct {
 	ID                  string    `json:"id" firestore:"id"`
 	Name                string    `json:"name" firestore:"name"`
 	Role                string    `json:"role" firestore:"role"`
+	Gender              string    `json:"gender" firestore:"gender"` // "male", "female", or empty
 	Birth               string    `json:"birth" firestore:"birth"`
 	Location            string    `json:"location" firestore:"location"` // Legacy, optional
 	Avatar              string    `json:"avatar" firestore:"avatar"`
@@ -175,6 +177,7 @@ type LoginResponse struct {
 type CreatePersonRequest struct {
 	Name     string   `json:"name" binding:"required"`
 	Role     string   `json:"role" binding:"required"`
+	Gender   string   `json:"gender"`   // "male", "female", or empty - used for avatar generation
 	Birth    string   `json:"birth"`    // Optional
 	Location string   `json:"location"` // Legacy, optional
 	Avatar   string   `json:"avatar"`   // Optional - backend generates default if empty
