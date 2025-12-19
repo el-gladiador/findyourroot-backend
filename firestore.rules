@@ -22,9 +22,9 @@ service cloud.firestore {
       return hasRole('admin');
     }
     
-    // Helper function to check if user is editor or admin
-    function isEditorOrAdmin() {
-      return hasRole('editor') || hasRole('admin');
+    // Helper function to check if user is co-admin or admin
+    function isCoAdminOrAdmin() {
+      return hasRole('co-admin') || hasRole('admin');
     }
     
     // Users collection
@@ -37,27 +37,27 @@ service cloud.firestore {
     
     // People collection (family tree members)
     // - Any authenticated user can read
-    // - Editors can create new people
-    // - Editors can only update/delete people they created
-    // - Admins can update/delete any person
+    // - Co-admins can create new people
+    // - Co-admins can only update/delete people they created
+    // - Admins can update/delete anyone
     match /people/{personId} {
       // Any authenticated user can read
       allow read: if isAuthenticated();
       
-      // Editors and admins can create
-      allow create: if isEditorOrAdmin();
+      // Co-admins and admins can create
+      allow create: if isCoAdminOrAdmin();
       
       // Update rules:
       // - Admin can update any
-      // - Editor can only update if they created it
+      // - Co-admin can only update if they created it
       allow update: if isAdmin() || 
-                       (isEditorOrAdmin() && resource.data.created_by == request.auth.uid);
+                       (isCoAdminOrAdmin() && resource.data.created_by == request.auth.uid);
       
       // Delete rules:
       // - Admin can delete any
-      // - Editor can only delete if they created it
+      // - Co-admin can only delete if they created it
       allow delete: if isAdmin() || 
-                       (isEditorOrAdmin() && resource.data.created_by == request.auth.uid);
+                       (isCoAdminOrAdmin() && resource.data.created_by == request.auth.uid);
     }
     
     // Permission requests collection

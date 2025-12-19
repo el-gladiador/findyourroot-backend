@@ -82,8 +82,7 @@ func RequireContributor() gin.HandlerFunc {
 		role := models.UserRole(userClaims.Role)
 
 		// Contributors and above can make suggestions
-		if role != models.RoleContributor && role != models.RoleEditor &&
-			role != models.RoleCoAdmin && role != models.RoleAdmin {
+		if role != models.RoleContributor && role != models.RoleCoAdmin && role != models.RoleAdmin {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Contributor access required", "required_role": "contributor"})
 			c.Abort()
 			return
@@ -93,7 +92,8 @@ func RequireContributor() gin.HandlerFunc {
 	}
 }
 
-// RequireEditor ensures user has at least editor role (can edit directly)
+// RequireEditor ensures user has at least co-admin role (can edit directly)
+// Note: Function name kept as RequireEditor for backward compatibility
 func RequireEditor() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, exists := c.Get("claims")
@@ -106,9 +106,9 @@ func RequireEditor() gin.HandlerFunc {
 		userClaims := claims.(*Claims)
 		role := models.UserRole(userClaims.Role)
 
-		// Editor, co-admin, and admin can edit directly
+		// Co-admin and admin can edit directly
 		if !role.CanEditDirectly() {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Editor or Admin access required", "required_role": "editor"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "Co-Admin or Admin access required", "required_role": "co-admin"})
 			c.Abort()
 			return
 		}

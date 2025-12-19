@@ -8,7 +8,6 @@ type UserRole string
 const (
 	RoleViewer      UserRole = "viewer"      // Can only view the tree
 	RoleContributor UserRole = "contributor" // Can suggest add/edit/delete (needs approval)
-	RoleEditor      UserRole = "editor"      // Can add/edit/delete directly (legacy - same as co-admin now)
 	RoleCoAdmin     UserRole = "co-admin"    // Can add/edit/delete + approve suggestions
 	RoleAdmin       UserRole = "admin"       // Full access + manage users + manage co-admins (tree owner)
 )
@@ -20,7 +19,7 @@ func (r UserRole) CanApprove() bool {
 
 // CanEditDirectly returns true if the role can edit the tree without approval
 func (r UserRole) CanEditDirectly() bool {
-	return r == RoleEditor || r == RoleCoAdmin || r == RoleAdmin
+	return r == RoleCoAdmin || r == RoleAdmin
 }
 
 // CanManageUsers returns true if the role can manage other users' roles

@@ -316,8 +316,8 @@ func (h *FirestoreAuthHandler) RequestPermission(c *gin.Context) {
 		return
 	}
 
-	if req.RequestedRole != models.RoleContributor && req.RequestedRole != models.RoleEditor && req.RequestedRole != models.RoleCoAdmin && req.RequestedRole != models.RoleAdmin {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role requested. Must be 'contributor', 'editor', 'co-admin', or 'admin'"})
+	if req.RequestedRole != models.RoleContributor && req.RequestedRole != models.RoleCoAdmin && req.RequestedRole != models.RoleAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role requested. Must be 'contributor', 'co-admin', or 'admin'"})
 		return
 	}
 
@@ -627,12 +627,11 @@ func (h *FirestoreAuthHandler) UpdateUserRole(c *gin.Context) {
 	validRoles := map[models.UserRole]bool{
 		models.RoleViewer:      true,
 		models.RoleContributor: true,
-		models.RoleEditor:      true,
 		models.RoleCoAdmin:     true,
 		models.RoleAdmin:       true,
 	}
 	if !validRoles[req.Role] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role. Must be viewer, contributor, editor, co-admin, or admin"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role. Must be viewer, contributor, co-admin, or admin"})
 		return
 	}
 
