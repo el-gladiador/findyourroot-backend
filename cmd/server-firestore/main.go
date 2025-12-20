@@ -179,7 +179,11 @@ func main() {
 		{
 			treeAdmin.DELETE("/all", treeHandler.DeleteAllPeople)
 			treeAdmin.POST("/populate", treeHandler.PopulateTreeFromText)
+			treeAdmin.PUT("/settings", treeHandler.UpdateTreeSettings)
 		}
+
+		// Tree settings (public read)
+		v1.GET("/tree/settings", treeHandler.GetTreeSettings)
 	}
 
 	// Start server

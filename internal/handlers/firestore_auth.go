@@ -177,17 +177,30 @@ func (h *FirestoreAuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Validate tree name (only "Batur" allowed for now)
-	if req.TreeName != "Batur" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid tree name. Currently only 'Batur' tree is available."})
+	ctx := context.Background()
+
+	// Fetch configured tree name from settings
+	settingsDoc, err := h.client.Collection("settings").Doc("tree").Get(ctx)
+	var configuredTreeName string
+	if err == nil {
+		if tn, ok := settingsDoc.Data()["tree_name"].(string); ok && tn != "" {
+			configuredTreeName = tn
+		}
+	}
+
+	// Validate tree name - must match the admin-configured tree name
+	if configuredTreeName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No tree has been created yet. Please contact admin."})
+		return
+	}
+	if req.TreeName != configuredTreeName {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid tree name. The available tree is: " + configuredTreeName})
 		return
 	}
 
-	ctx := context.Background()
-
 	// Check if user already exists
 	iter := h.client.Collection("users").Where("email", "==", req.Email).Limit(1).Documents(ctx)
-	_, err := iter.Next()
+	_, err = iter.Next()
 	if err != iterator.Done {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
 		return

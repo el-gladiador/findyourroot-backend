@@ -682,7 +682,8 @@ func (h *FirestoreTreeHandler) CheckDuplicateName(c *gin.Context) {
 
 // PopulateTreeRequest represents a request to populate tree from indented text
 type PopulateTreeRequest struct {
-	Text string `json:"text" binding:"required"`
+	Text     string `json:"text" binding:"required"`
+	TreeName string `json:"tree_name" binding:"required"`
 }
 
 // ParsedPerson represents a person parsed from text with their level
@@ -964,10 +965,85 @@ func (h *FirestoreTreeHandler) PopulateTreeFromText(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[PopulateTree] Created %d people from text", len(createdPeople))
+	// Save tree name to settings
+	_, err := h.client.Collection("settings").Doc("tree").Set(ctx, map[string]interface{}{
+		"tree_name":  req.TreeName,
+		"updated_at": now,
+		"updated_by": userID.(string),
+	}, firestore.MergeAll)
+	if err != nil {
+		log.Printf("[PopulateTree] Failed to save tree settings: %v", err)
+		// Don't fail the request, tree was created successfully
+	}
+
+	log.Printf("[PopulateTree] Created %d people from text with tree name: %s", len(createdPeople), req.TreeName)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"created_count": len(createdPeople),
 		"people":        createdPeople,
+		"tree_name":     req.TreeName,
 	})
+}
+
+// TreeSettings represents the tree configuration
+type TreeSettings struct {
+	TreeName  string    `json:"tree_name" firestore:"tree_name"`
+	UpdatedAt time.Time `json:"updated_at" firestore:"updated_at"`
+	UpdatedBy string    `json:"updated_by" firestore:"updated_by"`
+}
+
+// GetTreeSettings returns the tree settings
+func (h *FirestoreTreeHandler) GetTreeSettings(c *gin.Context) {
+	ctx := context.Background()
+
+	doc, err := h.client.Collection("settings").Doc("tree").Get(ctx)
+	if err != nil {
+		// Return default settings if not found
+		c.JSON(http.StatusOK, gin.H{
+			"tree_name": "Family Tree",
+		})
+		return
+	}
+
+	var settings TreeSettings
+	if err := doc.DataTo(&settings); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"tree_name": "Family Tree",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, settings)
+}
+
+// UpdateTreeSettingsRequest represents the request to update tree settings
+type UpdateTreeSettingsRequest struct {
+	TreeName string `json:"tree_name" binding:"required"`
+}
+
+// UpdateTreeSettings updates the tree settings (admin only)
+func (h *FirestoreTreeHandler) UpdateTreeSettings(c *gin.Context) {
+	var req UpdateTreeSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	ctx := context.Background()
+
+	settings := TreeSettings{
+		TreeName:  req.TreeName,
+		UpdatedAt: time.Now(),
+		UpdatedBy: userID.(string),
+	}
+
+	_, err := h.client.Collection("settings").Doc("tree").Set(ctx, settings)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings"})
+		return
+	}
+
+	log.Printf("[TreeSettings] Tree name updated to %q by user %s", req.TreeName, userID)
+	c.JSON(http.StatusOK, settings)
 }
